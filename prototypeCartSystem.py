@@ -86,7 +86,7 @@ def processCartDetection(cartId):
     if cartData is None:
         conn.close()
         return f"Could not find cart with ID: {cartId}", (0, 0, 255)
-    
+    #print(cartData)
     name, contents, dateUsage, lastLocation = cartData
     timeNow = datetime.datetime.now().strftime("%m-%d-%Y %H:%M:%S")
 
@@ -104,29 +104,37 @@ def processCartDetection(cartId):
 def cartsInLocation(location):
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
-    cursor.execute("SELECT id FROM carts WHERE current_location = ?", (location.toString()))
+    cursor.execute("SELECT id FROM carts WHERE current_location = ?", (location.toString(),))
     expectedIds = cursor.fetchall()
-    return expectedIds.sort()
+    expectedIds = [item[0] for item in expectedIds]
+    #print(expectedIds)
+    return expectedIds
 
 def triggerInTransit(cartId):
-    print(f"\n [NOTICE] Cart {cartId} has left {CURRENT_LOCATION.toString()}.")
     timeNow = datetime.datetime.now().strftime("%m-%d-%Y %H:%M:%S")
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
+
     cursor.execute("UPDATE carts SET current_location = ? WHERE id = ?", (Locale.InTransit.toString(), cartId))
     cursor.execute("INSERT INTO history (cart_id, location, timestamp) VALUES (?, ?, ?)", (cartId, Locale.InTransit.toString(), timeNow))
+
+    cursor.execute("SELECT name FROM carts WHERE id = ?", (cartId,))
+    name = cursor.fetchone()
+    print(f"\n [NOTICE] {name} has left {CURRENT_LOCATION.toString()}.")
 
     conn.commit()
     conn.close()
     with timerLock:
         if cartId in activeTimers:
-            del activeTimers[cartId]
+            activeTimers[cartId].cancel()
+            if not activeTimers[cartId].is_alive():
+                del activeTimers[cartId]
 
 
 
 # Main Execution
 init_database()
-tagDetector = Detector(families='tag36h11', nthreads=4)
+tagDetector = Detector(families='tag36h11', nthreads=2)
 vidCap = cv2.VideoCapture(0)
 
 print(f"\nTracking system live at {CURRENT_LOCATION.toString()}. Recognizes tags 0 through 8.")
@@ -136,6 +144,7 @@ timerLock = threading.Lock()
 
 while True:
     expectedCarts = cartsInLocation(CURRENT_LOCATION)
+    #DEBUGGING: expectedCarts = [0,1,2,3,4,5,6,7,8]
     success, frame = vidCap.read()
     if not success:
         print('Error: Failed to capture video')
@@ -179,6 +188,7 @@ while True:
 with timerLock:
     for cartId, timer in activeTimers.items():
         timer.cancel()
+        timer.join()
 
 print('Exiting process...')
 vidCap.release()
