@@ -18,6 +18,7 @@ class Locale(Enum):
             return "JIT"
 
 CURRENT_LOCATION : Final = Locale.JIT
+CAMERA_TIMEOUT : Final = 5
 SERVER_IP : Final = '10.35.174.27'
 SERVER_URL : Final = f'http://{SERVER_IP}:5000/scan'
 
@@ -30,6 +31,17 @@ detector = cv2.aruco.ArucoDetector(arucoDict, parameters)
 videoCapture = cv2.VideoCapture(0)
 
 print(f'Scanner Client active at [{CURRENT_LOCATION}]. Point Camera at some AprilTags...')
+
+def removeDebounce(cartId):
+    with timerLock:
+        if cartId in activeTimers:
+            activeTimers[cartId].cancel()
+            while activeTimers[cartId].is_alive():
+                pass
+            del activeTimers[cartId]
+
+activeTimers = {}
+timerLock =  threading.Lock()
 
 # Main loop 
 while True:
@@ -54,6 +66,13 @@ while True:
 
                     if response.status_code == 200:
                         lastKnownState[cartId] = CURRENT_LOCATION
+
+                        with timerLock:
+                            if cartId not in activeTimers:
+                                t = threading.Timer(CAMERA_TIMEOUT, removeDebounce, args=[cartId])
+                                activeTimers[cartId] = t
+                                t.start()
+
                         print(f'Dispatched: Cart {cartId} is at {CURRENT_LOCATION.toString()}.')
                     
                 except requests.exceptions.RequestException:
@@ -63,6 +82,11 @@ while True:
 
     if cv2.waitKey(1) & 0xFF == ord('q'):
         break
+
+with timerLock:
+    for cartId, timer in activeTimers.items():
+        timer.cancel()
+        timer.join()
 
 videoCapture.release()
 cv2.destroyAllWindows()
