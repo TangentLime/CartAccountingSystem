@@ -27,8 +27,6 @@ CURRENT_LOCATION: Final = Locale.JurassicPark
 
 DB_FILE: Final = "trackingFile.db"
 
-TRANSIT_DELAY: Final = 10 # seconds
-
 
 
 def init_database():
@@ -101,36 +99,6 @@ def processCartDetection(cartId):
 
     return f"{name} | Usage Date: {dateUsage} | Location: {CURRENT_LOCATION.toString()}", (0, 255, 0)
 
-def cartsInLocation(location):
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-    cursor.execute("SELECT id FROM carts WHERE current_location = ?", (location.toString(),))
-    expectedIds = cursor.fetchall()
-    expectedIds = [item[0] for item in expectedIds]
-    #print(expectedIds)
-    return expectedIds
-
-def triggerInTransit(cartId):
-    timeNow = datetime.datetime.now().strftime("%m-%d-%Y %H:%M:%S")
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-
-    cursor.execute("UPDATE carts SET current_location = ? WHERE id = ?", (Locale.InTransit.toString(), cartId))
-    cursor.execute("INSERT INTO history (cart_id, location, timestamp) VALUES (?, ?, ?)", (cartId, Locale.InTransit.toString(), timeNow))
-
-    cursor.execute("SELECT name FROM carts WHERE id = ?", (cartId,))
-    name = cursor.fetchone()
-    print(f"\n [NOTICE] {name} has left {CURRENT_LOCATION.toString()}.")
-
-    conn.commit()
-    conn.close()
-    with timerLock:
-        if cartId in activeTimers:
-            activeTimers[cartId].cancel()
-            if not activeTimers[cartId].is_alive():
-                del activeTimers[cartId]
-
-
 
 # Main Execution
 init_database()
@@ -139,12 +107,8 @@ vidCap = cv2.VideoCapture(0)
 
 print(f"\nTracking system live at {CURRENT_LOCATION.toString()}. Recognizes tags 0 through 8.")
 
-activeTimers = {}
-timerLock = threading.Lock()
 
 while True:
-    expectedCarts = cartsInLocation(CURRENT_LOCATION)
-    #DEBUGGING: expectedCarts = [0,1,2,3,4,5,6,7,8]
     success, frame = vidCap.read()
     if not success:
         print('Error: Failed to capture video')
@@ -153,31 +117,14 @@ while True:
     grayFrame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     detections = tagDetector.detect(grayFrame)
 
-    visibleIds = []
-
     for tag in detections:
         cartId = tag.tag_id
-        visibleIds.append(cartId)
         uiText, color = processCartDetection(cartId)
 
         corners = tag.corners.astype(int).reshape((-1, 1, 2))
         cv2.polylines(frame, [corners], isClosed=True, color=color, thickness=2)
         topLeft = tuple(corners[0][0])
         cv2.putText(frame, uiText, (topLeft[0], topLeft[1]-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
-    
-    with timerLock:
-        for cartId in expectedCarts:
-            if cartId in visibleIds:
-                # Cart is visible: cancel any timers for it
-                if cartId in activeTimers:
-                    activeTimers[cartId].cancel()
-                    del activeTimers[cartId]
-            else:
-                # Cart is missing: start a timer if its not already started
-                if cartId not in activeTimers:
-                    t = threading.Timer(TRANSIT_DELAY, triggerInTransit, args=[cartId])
-                    activeTimers[cartId] = t
-                    t.start()
 
 
     cv2.imshow(f"Tracking Terminal - {CURRENT_LOCATION.toString()}", frame)
@@ -185,10 +132,6 @@ while True:
     if cv2.waitKey(1) & 0xFF == ord(' '):
         break
 
-with timerLock:
-    for cartId, timer in activeTimers.items():
-        timer.cancel()
-        timer.join()
 
 print('Exiting process...')
 vidCap.release()
