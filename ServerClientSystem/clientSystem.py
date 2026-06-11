@@ -17,10 +17,20 @@ class Locale(Enum):
         elif self.value == 2:
             return "JIT"
 
+
+
+localTesting = True
+
+
+
 CURRENT_LOCATION : Final = Locale.JIT
 CAMERA_TIMEOUT : Final = 5
 SERVER_IP : Final = 'GNELTS00014685.local'
-SERVER_URL : Final = f'http://{SERVER_IP}:5000/scan'
+LOCAL_IP : Final = '127.0.0.1'
+if localTesting:
+    SERVER_URL : Final = f'http://{LOCAL_IP}:5000/scan'
+else:
+    SERVER_URL : Final = f'http://{SERVER_IP}:5000/scan'
 
 lastKnownState = {}
 
@@ -30,15 +40,14 @@ detector = cv2.aruco.ArucoDetector(arucoDict, parameters)
 
 videoCapture = cv2.VideoCapture(0)
 
-print(f'Scanner Client active at [{CURRENT_LOCATION}]. Point Camera at some AprilTags...')
+print(f'Scanner Client active at [{CURRENT_LOCATION.toString()}]. Point Camera at some AprilTags...')
 
 def removeDebounce(cartId):
     with timerLock:
         if cartId in activeTimers:
             activeTimers[cartId].cancel()
-            while activeTimers[cartId].is_alive():
-                pass
             del activeTimers[cartId]
+            lastKnownState[cartId] = None
 
 activeTimers = {}
 timerLock =  threading.Lock()
@@ -67,14 +76,16 @@ while True:
                     if response.status_code == 200:
                         lastKnownState[cartId] = CURRENT_LOCATION
 
-                        with timerLock:
-                            if cartId not in activeTimers:
-                                t = threading.Timer(CAMERA_TIMEOUT, removeDebounce, args=[cartId])
-                                activeTimers[cartId] = t
-                                t.start()
-
                         print(f'Dispatched: Cart {cartId} is at {CURRENT_LOCATION.toString()}.')
-                    
+                    else:
+                        lastKnownState[cartId] = CURRENT_LOCATION
+                        print(f'Rejected: Could not find cart {cartId}.')
+                    with timerLock:
+                        if cartId not in activeTimers:
+                            t = threading.Timer(CAMERA_TIMEOUT, removeDebounce, args=[cartId])
+                            activeTimers[cartId] = t
+                            t.start()
+
                 except requests.exceptions.RequestException:
                     print('Connection Error: Server unreachable over network.')
     
