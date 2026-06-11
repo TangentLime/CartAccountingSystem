@@ -19,7 +19,7 @@ class Locale(Enum):
 
 CURRENT_LOCATION : Final = Locale.JIT
 CAMERA_TIMEOUT : Final = 5
-SERVER_IP : Final = '10.35.174.27'
+SERVER_IP : Final = 'GNELTS00014685.local'
 SERVER_URL : Final = f'http://{SERVER_IP}:5000/scan'
 
 lastKnownState = {}
