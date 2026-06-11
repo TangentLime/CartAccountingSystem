@@ -19,7 +19,7 @@ class Locale(Enum):
 
 
 
-localTesting = True
+localTesting = not True
 
 
 
@@ -34,14 +34,6 @@ else:
 
 lastKnownState = {}
 
-arucoDict = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_APRILTAG_36h11)
-parameters = cv2.aruco.DetectorParameters()
-detector = cv2.aruco.ArucoDetector(arucoDict, parameters)
-
-videoCapture = cv2.VideoCapture(0)
-
-print(f'Scanner Client active at [{CURRENT_LOCATION.toString()}]. Point Camera at some AprilTags...')
-
 def removeDebounce(cartId):
     with timerLock:
         if cartId in activeTimers:
@@ -49,8 +41,22 @@ def removeDebounce(cartId):
             del activeTimers[cartId]
             lastKnownState[cartId] = None
 
+
+
+arucoDict = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_APRILTAG_36h11)
+parameters = cv2.aruco.DetectorParameters()
+detector = cv2.aruco.ArucoDetector(arucoDict, parameters)
+
+videoCapture = cv2.VideoCapture(0)
+videoCapture.set(cv2.CAP_PROP_FRAME_WIDTH, 320)
+videoCapture.set(cv2.CAP_PROP_FRAME_HEIGHT, 240)
+
+print(f'Scanner Client active at [{CURRENT_LOCATION.toString()}]. Point Camera at some AprilTags...')
+
 activeTimers = {}
 timerLock =  threading.Lock()
+
+frameCount = 0
 
 # Main loop 
 while True:
@@ -58,38 +64,41 @@ while True:
     if not success:
         break
 
-    grayFrame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    corners, ids, rejected = detector.detectMarkers(grayFrame)
+    frameCount += 1
+    if frameCount % 6 == 0:
+        grayFrame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        corners, ids, rejected = detector.detectMarkers(grayFrame)
 
-    if ids is not None: 
-        cv2.aruco.drawDetectedMarkers(frame, corners, ids)
+        if ids is not None: 
+            cv2.aruco.drawDetectedMarkers(frame, corners, ids)
 
-        for markerId in ids:
-            cartId = int(markerId[0])
+            for markerId in ids:
+                cartId = int(markerId[0])
 
-            # Debouncing:
-            if lastKnownState.get(cartId) != CURRENT_LOCATION:
-                try:
-                    payload = {'cartId': cartId, 'location': CURRENT_LOCATION.toString()}
-                    response = requests.post(SERVER_URL, json=payload, timeout=1.5)
+                # Debouncing:
+                if lastKnownState.get(cartId) != CURRENT_LOCATION:
+                    try:
+                        payload = {'cartId': cartId, 'location': CURRENT_LOCATION.toString()}
+                        response = requests.post(SERVER_URL, json=payload, timeout=1.5)
 
-                    if response.status_code == 200:
-                        lastKnownState[cartId] = CURRENT_LOCATION
+                        if response.status_code == 200:
+                            lastKnownState[cartId] = CURRENT_LOCATION
 
-                        print(f'Dispatched: Cart {cartId} is at {CURRENT_LOCATION.toString()}.')
-                    else:
-                        lastKnownState[cartId] = CURRENT_LOCATION
-                        print(f'Rejected: Could not find cart {cartId}.')
-                    with timerLock:
-                        if cartId not in activeTimers:
-                            t = threading.Timer(CAMERA_TIMEOUT, removeDebounce, args=[cartId])
-                            activeTimers[cartId] = t
-                            t.start()
+                            print(f'Dispatched: Cart {cartId} is at {CURRENT_LOCATION.toString()}.')
+                        else:
+                            lastKnownState[cartId] = CURRENT_LOCATION
+                            print(f'Rejected: Could not find cart {cartId}.')
+                        with timerLock:
+                            if cartId not in activeTimers:
+                                t = threading.Timer(CAMERA_TIMEOUT, removeDebounce, args=[cartId])
+                                activeTimers[cartId] = t
+                                t.start()
 
-                except requests.exceptions.RequestException:
-                    print('Connection Error: Server unreachable over network.')
-    
+                    except requests.exceptions.RequestException:
+                        print('Connection Error: Server unreachable over network.')
+        
     cv2.imshow(f'Scanner Terminal - {CURRENT_LOCATION.toString()}', frame)
+
 
     if cv2.waitKey(1) & 0xFF == ord('q'):
         break
