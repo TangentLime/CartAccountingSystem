@@ -1,1 +1,7 @@
 trackingFile.db
+NFCSystem/.pio
+NFCSystem/.vscode/.browse.c_cpp.db*
+NFCSystem/.vscode/c_cpp_properties.json
+NFCSystem/.vscode/launch.json
+NFCSystem/.vscode/ipch
+NFCSystem/include/config.h
