@@ -1,6 +1,6 @@
 import datetime
 import sqlite3
-import numpy as np
+import logging
 from typing import Final
 from enum import Enum
 from flask import Flask, request, jsonify
@@ -21,13 +21,16 @@ class Locale(Enum):
 
 app = Flask(__name__)
 
+flasking = False
 DB_FILE: Final = "trackingFile.db"
+PORT_NAME: Final = 3000
 
 
 
 def init_database():
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
+    cursor.execute('PRAGMA journal_mode=WAL;')
 
     # State Table
     cursor.execute('''
@@ -73,8 +76,18 @@ def init_database():
 @app.route('/scan', methods = ['POST'])
 def processScan():
     data = request.json
+    if not data:
+        return jsonify({'status': 'error', 'message': 'No JSON body'}), 400
+    
     cartId = data.get('cartId')
     clientLocation = data.get('location') # In String form
+
+    if cartId is None or clientLocation is None:
+        return jsonify({'status': 'error', 'message': 'Missing cartId or location'}), 400
+
+    validLocations = [loc.toString() for loc in Locale]
+    if clientLocation not in validLocations:
+        return jsonify({'status': 'error', 'message': f'Invalid location. Must be on of: {validLocations}'}), 400
 
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
@@ -98,7 +111,33 @@ def processScan():
     conn.close()
     return jsonify({'status': 'success', 'cartName': name, 'location': clientLocation})
 
+@app.after_request
+def log_request(response):
+    print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] "
+          f"{request.remote_addr} "
+          f"{request.method} {request.path} "
+          f"-> {response.status_code}")
+    return response
+
 if __name__ == '__main__':
     init_database()
-    # Maybe change host variable for better security: 0.0.0.0 listens to whole network
-    app.run(host='0.0.0.0', port=5000)
+
+    logging.basicConfig(
+        level = logging.INFO,
+        format = '%(asctime)s [%(levelname)s] %(name)s: %(message)s',
+        datefmt = '%H:%M:%S'
+    )
+
+    if not flasking:
+        from waitress import serve
+        # Maybe change host variable for better security: 0.0.0.0 listens to whole network
+        print('='*60)
+        print(f'Starting Server on http://GNELTS00014685/{PORT_NAME}')
+        print('Press Ctrl+C to terminate')
+        print('='*60)
+        try:
+            serve(app, host='0.0.0.0', port=PORT_NAME, threads=8)
+        except KeyboardInterrupt:
+            print('\nServer Terminated by user.')
+    else:
+        app.run(host='0.0.0.0', port=PORT_NAME)
