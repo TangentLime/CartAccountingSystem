@@ -9,6 +9,7 @@ class Locale(Enum):
     InTransit = 0
     JurassicPark = 1
     JIT = 2
+    MAL = 3
 
     def toString(self):
         if self.value == 0:
@@ -17,6 +18,8 @@ class Locale(Enum):
             return "Jurassic Park"
         elif self.value == 2:
             return "JIT"
+        elif self.value == 3:
+            return "MAL"
         
 
 app = Flask(__name__)
