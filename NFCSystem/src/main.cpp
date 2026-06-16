@@ -98,6 +98,7 @@ void connectWiFi() {
     WiFi.begin(WIFI_SSID, WIFI_PASS);
   }
 
+  
   uint32_t start = millis();
   while (WiFi.status() != WL_CONNECTED && millis() - start < WIFI_CONNECT_TIMEOUT_MS) {
     delay(500);
