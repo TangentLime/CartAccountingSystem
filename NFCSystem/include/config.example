@@ -1,0 +1,32 @@
+#pragma once
+
+#include <Arduino.h>
+
+// Network config
+constexpr const char* WIFI_SSID = [ssid];
+constexpr const char* WIFI_PASS = [password];
+
+// Server endpoint: Change once open port found
+constexpr const char* SERVER_URL = "http://[SERVER IP]:[PORT]/scan";
+
+// Match API_KEY in server.py
+constexpr const char* API_KEY = your-key-here;
+
+// Pin assignments
+constexpr uint8_t SDA_PIN    = 21;
+constexpr uint8_t SCL_PIN    = 22;
+constexpr uint8_t BUZZER_PIN = 25;
+
+// Behavior tuning
+constexpr uint16_t SCAN_INTERVAL_MS      = 200;    // delay between PN532 polls
+constexpr uint16_t DEBOUNCE_SAME_TAG_MS  = 3000;   // ignore same UID re-scanned within this window
+constexpr uint16_t HTTP_TIMEOUT_MS       = 4000;
+constexpr uint16_t WIFI_RETRY_INTERVAL_S = 30;
+constexpr uint16_t WIFI_CONNECT_TIMEOUT_MS = 20000;
+
+// Fallback in case SCANNER_LOCATION isn't defined
+/*
+#ifndef SCANNER_LOCATION
+  #define SCANNER_LOCATION "Unknown"
+#endif
+*/

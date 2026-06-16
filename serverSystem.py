@@ -10,6 +10,8 @@ from typing import Final
 from enum import Enum
 from functools import wraps
 from flask import Flask, request, jsonify, render_template_string
+from dotenv import load_dotenv
+import os
 
 class Locale(Enum):
     InTransit = 0
@@ -30,10 +32,16 @@ class Locale(Enum):
 
 app = Flask(__name__)
 
+load_dotenv()
+
 flasking = False
 DB_FILE: Final = "trackingFile.db"
 PORT_NAME: Final = 3000
-API_KEY: Final = 'lVj7QgyoL06lqOFDCCKZfXwRle9WVLP0ST4R74-0gT4'
+API_KEY: Final = os.environ.get('NFC_API_KEY')
+
+if not API_KEY:
+    print("ERROR: NFC_API_KEY not set. Please check .env file.")
+    sys.exit(1)
 
 def require_api_key(f):
     """Decorator that rejects any request without a valid X-API-Key header."""
