@@ -1,0 +1,50 @@
+# OSUT Cart System
+
+The OSUT Cart System is a program for managing several NFC readers and a server that manages a database over WIFI.
+
+## Installation
+
+There is currently no method for installing the OSUT Cart System. Please contact author for code files.
+
+## Setup
+
+### Step 1:
+Go to your command line and type
+```
+pip install -r requirements.txt
+```
+
+### Step 2:
+Enter all relevant information into config.h and serverSystem.py
+
+### Step 3:
+Drop a shortcut to start_server.bat into:
+```
+%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup
+```
+This will launch the server when you login to your Windows account.
+
+## Enrolling Tags
+To enroll a tag, use the ESP32's Serial monitor to read the cart's tag once. The monitor will print something in the form of:
+```
+Tag detected: UID=04A1B2C3D4E5F6
+```
+Take this UID and paste it into ENROLLMENTS in enroll.py in the following form:
+```python
+ENROLLMENTS = [
+    (0, "04A1B2C3D4E5F6") # Example if Tag above corresponds to ID 0
+]
+```
+When all tags have been entered into enroll.py, run the file.
+
+## Warnings
+This is **NOT** data secure. There is no HTTPS or encryption on the data being sent, therefore **ALL** data sent with this code will be readable by anyone on the network. This is only intended to be used with non-sensitive data for piloting purposes. Any transmission of personal or sensitive data using this system is a data security issue. Use at your own risk.
+
+## Authors & Acknowledgement
+### Author: Brian Cook
+Email: </br>
+cookb14@gene.com (Until August 2026)</br>
+briancoeng@gmail.com (Permanent, External)
+
+## License
+I made this, but Genentech owns it, so don't use it commercially without their consent. I don't want to make a LICENSE file, so whatever the license is that fits that is the one.
