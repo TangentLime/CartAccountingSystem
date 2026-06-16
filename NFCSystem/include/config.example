@@ -12,6 +12,13 @@ constexpr const char* SERVER_URL = "http://[SERVER IP]:[PORT]/scan";
 // Match API_KEY in server.py
 constexpr const char* API_KEY = your-key-here;
 
+// Server Cert
+const char* SERVER_CERT = R"EOF(
+-----BEGIN CERTIFICATE-----
+                  <----It all goes in here
+-----END CERTIFICATE-----
+)EOF";
+
 // Pin assignments
 constexpr uint8_t SDA_PIN    = 21;
 constexpr uint8_t SCL_PIN    = 22;

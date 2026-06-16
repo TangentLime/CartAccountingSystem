@@ -1,2 +1,6 @@
 flask>=3.0
-waitress>=3.0
+hypercorn>=0.16
+cryptography>=42.0
+python-dotenv>=1.0
+zeroconf>=0.131
+requests>=2.31
