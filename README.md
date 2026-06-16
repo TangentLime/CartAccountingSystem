@@ -1,10 +1,12 @@
-# OSUT Cart System
+# CartAccountingSystem
 
-The OSUT Cart System is a program for managing several NFC readers and a server that manages a database over WIFI.
+CartAccountingSystem is a program for managing several NFC readers and a server that manages a database over WIFI.
 
 ## Installation
 
-There is currently no method for installing the OSUT Cart System. Please contact author for code files.
+There is currently no method for installing the CartAccountingSystem. Please contact author for code files.
+
+EDIT: You can now go to https://github.com/TangentLime/CartAccountingSystem.git and request from there.
 
 ## Setup
 
@@ -44,7 +46,9 @@ This is **NOT** data secure. There is no HTTPS or encryption on the data being s
 ### Author: Brian Cook
 Email: </br>
 cookb14@gene.com (Until August 2026)</br>
-briancoeng@gmail.com (Permanent, External)
+briancoeng@gmail.com (Permanent, External)</br></br>
+Github:</br>
+https://github.com/TangentLime
 
 ## License
 I made this, but Genentech owns it, so don't use it commercially without their consent. I don't want to make a LICENSE file, so whatever the license is that fits that is the one.
