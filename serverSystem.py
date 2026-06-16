@@ -298,29 +298,30 @@ def backup_loop():
 if __name__ == '__main__':
     init_database()
 
-    logging.basicConfig(
-        level = logging.INFO,
-        format = '%(asctime)s [%(levelname)s] %(name)s: %(message)s',
-        datefmt = '%H:%M:%S'
-    )
-
+    
     threading.Thread(target=prevent_sleep, daemon=True).start()
-    threading.Thread(target=backup_loop,   daemon=True).start()
+    threading.Thread(target=backup_loop, daemon=True).start()
 
-    if not flasking:
-        # Maybe change host variable for better security: 0.0.0.0 listens to whole network
-        print("=" * 60)
-        print("  Starting Server...")
-        print(f"  Listening on: http://0.0.0.0:{PORT_NAME}")
-        print(f"  Health check: http://GNELTS00014685:{PORT_NAME}/health")
-        print("  Press Ctrl+C to terminate")
-        print("=" * 60)
+    print("=" * 60)
+    print("  Starting Server...")
+    print("  Cart Tracker Server (HTTPS)")
+    print(f"  Listening on: https://0.0.0.0:{PORT}")
+    print("  Press Ctrl+C to stop")
+    print("=" * 60)
+
+    try:
+        import asyncio
+        from hypercorn.config import Config
+        from hypercorn.asyncio import serve as hypercorn_serve
         
-        try:
-            from waitress import serve
-            serve(app, host='0.0.0.0', port=PORT_NAME, threads=8)
-        except KeyboardInterrupt:
-            print('\nServer Terminating...')
-    else:
-        app.run(host='0.0.0.0', port=PORT_NAME)
-    print('Server Terminated.')
+        config = Config()
+        config.bind = [f"0.0.0.0:{PORT}"]
+        config.certfile = "cert.pem"
+        config.keyfile  = "key.pem"
+        config.workers  = 1  # Flask isn't async, keep this 1
+        
+        asyncio.run(hypercorn_serve(app, config))
+    except KeyboardInterrupt:
+        print("\nShutting down...")
+    
+    print("Server Terminated.")

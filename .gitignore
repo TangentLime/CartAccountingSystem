@@ -8,3 +8,6 @@ NFCSystem/include/config.h
 prototypeAprils.py
 protoTypeCartSystem.py
 .env
+generate_cert.py
+key.pem
+cert.pem

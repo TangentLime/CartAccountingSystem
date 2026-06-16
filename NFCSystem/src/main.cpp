@@ -20,6 +20,7 @@
 #include <Adafruit_PN532.h>
 #include <WiFi.h>
 #include <HTTPClient.h>
+#include <WiFiClientSecure.h>
 #include <ArduinoJson.h>
 
 #include "config.h"
@@ -134,9 +135,12 @@ int sendScanToServer(const String& uid) {
     return -1;
   }
 
+WiFiClientSecure client;
+client.setCACert(SERVER_CERT);
+  
   HTTPClient http;
   http.setTimeout(HTTP_TIMEOUT_MS);
-  if (!http.begin(SERVER_URL)) {
+  if (!http.begin(client, SERVER_URL)) {
     Serial.println("  http.begin() failed");
     return -1;
   }
