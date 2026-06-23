@@ -6,12 +6,13 @@ import time
 import ctypes
 import os
 import sys
+import queue
+import json
 from typing import Final
 from enum import Enum
 from functools import wraps
-from flask import Flask, request, jsonify, render_template_string
+from flask import Flask, request, jsonify, send_from_directory, Response
 from dotenv import load_dotenv
-import os
 
 class Locale(Enum):
     InTransit = 0
@@ -30,13 +31,18 @@ class Locale(Enum):
             return "MAL"
         
 
+testing = True
+
 app = Flask(__name__)
 
 load_dotenv()
 
 flasking = False
 DB_FILE: Final = "trackingFile.db"
-PORT_NAME: Final = 3000
+PORT_NAME: Final = 5000
+
+sseSubs = []
+sseLock = threading.Lock()
 
 API_KEY: Final = os.environ.get('NFC_API_KEY')
 
@@ -143,7 +149,8 @@ def processScan():
     cartId, name, lastLocation = cartData # lastLocation in String form
     timeNow = datetime.datetime.now().strftime('%m-%d-%Y %H:%M:%S')
 
-    if lastLocation != clientLocation:
+    locationChanged = lastLocation != clientLocation
+    if locationChanged:
         cursor.execute('UPDATE carts SET current_location = ? WHERE id = ?', (clientLocation, cartId))
         cursor.execute('INSERT INTO history (cart_id, old_location, new_location, timestamp) VALUES (?, ?, ?, ?)', (cartId, lastLocation, clientLocation, timeNow))
         conn.commit()
@@ -151,7 +158,10 @@ def processScan():
         print(f"[UPDATE] {name} moved from {lastLocation} to {clientLocation} ({timeNow})")
 
     conn.close()
-    return jsonify({'status': 'success', 'cartName': name, 'location': clientLocation})
+    if locationChanged:
+        broadcastUpdate()
+
+    return jsonify({'status': 'success', 'cartId': cartId, 'cartName': name, 'location': clientLocation})
 
 @app.after_request
 def log_request(response):
@@ -200,6 +210,7 @@ def enrollTag():
 
     conn.close()
     print(f"  [ENROLL] Cart #{cartId} ({row[0]}) -> UID {nfcUid}")
+    broadcastUpdate()
     return jsonify({'status': 'success', 'cartId': cartId, 'uid': nfcUid})
 
 
@@ -294,13 +305,75 @@ def backup_loop():
         except Exception as e:
             print(f"  [BACKUP ERROR] {e}")
 
+def getFullState():
+    # Build JSON for dashboards on connect and each change
+    conn = sqlite3.connect(DB_FILE)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT id, name, contents, date_usage, current_location FROM carts ORDER BY id               
+    ''')
+    carts = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+    return {
+        'carts': carts,
+        'server_time': datetime.datetime.now().strftime("%m-%d-%Y %H:%M:%S")
+    }
+
+def broadcastUpdate():
+    # Broadcast current state to each dashboard
+    payload = getFullState()
+    with sseLock:
+        dead = []
+        for dash in sseSubs:
+            try:
+                dash.put_nowait(payload)
+            except queue.Full:
+                dead.append(dash)
+        for dash in dead:
+            sseSubs.remove(dash)
+
+@app.route('/')
+def dashboard():
+    return send_from_directory('static', 'dashboard.html')
+
+@app.route('/api/stream')
+def event_stream():
+    def gen():
+        q = queue.Queue(maxSize=10)
+        with sseLock:
+            sseSubs.append(q)
+        
+        try:
+            initial = getFullState()
+            yield f"event: snapshot\ndata: {json.dumps(data)}\n\n"
+
+            while True:
+                try:
+                    data = q.get(timeout=30)
+                    yield f"event: snapshot\ndata: {json.dumps(data)}\n\n"
+                except queue.Empty:
+                    # keeps connection alive thru proxies
+                    yield": hearbeat\n\n"
+        finally:
+            with sseLock:
+                if q in sseSubs:
+                    sseSubs.remove(q)
+    return Response(
+        gen(),
+        mimetype='text/event-stream',
+        headers={
+            'Cache-Control': 'no-cache',
+            'X-Accel-Buffering': 'no'
+        }
+    )
 
 if __name__ == '__main__':
     init_database()
 
-    
-    threading.Thread(target=prevent_sleep, daemon=True).start()
-    threading.Thread(target=backup_loop, daemon=True).start()
+    if not testing:
+        threading.Thread(target=prevent_sleep, daemon=True).start()
+        threading.Thread(target=backup_loop, daemon=True).start()
 
     print("=" * 60)
     print("  Starting Server...")

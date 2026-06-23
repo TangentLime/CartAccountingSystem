@@ -1,0 +1,176 @@
+* { box-sizing: border-box; margin: 0; padding: 0;}
+
+html, body {
+    height: 100%;
+    background: #0f1419;
+    color: #e6e6e6;
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+}
+
+body {
+    display: flex;
+    flex-direction: column;
+    padding: 1.5rem 2rem;
+    cursor: none;
+}
+
+header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1.5rem;
+    padding-bottom: 1rem;
+    border-bottom: 2px solid #2a3540;
+    flex-shrink: 0;
+}
+
+h1 {
+    font-size: 2.75rem;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+}
+
+.status {
+    display: flex;
+    gap: 1.5rem;
+    align-items: center;
+    font-size: 1.1rem;
+}
+
+#connection-status {
+    font-weight: 600;
+    padding: 0.4rem 0.9rem;
+    border-radius: 999px;
+}
+#connection-status.ok          { background: rgba(76, 175, 80, 0.15);  color: #4caf50; }
+#connection-status.connecting  { background: rgba(255, 152, 0, 0.15);  color: #ff9800; }
+#connection-status.error       { background: rgba(244, 67, 54, 0.15);  color: #f44336; }
+
+#updated { color: #7a8a9a; }
+
+
+#board {
+  color: #8aa5c2;
+  font-size: 1rem;
+  font-weight: 700;
+  padding: 0.25rem 0.75rem;
+  border-radius: 999px;
+  min-width: 2.5rem;
+  text-align: center;
+}
+
+.column[data-location="Jurassic Park"] .column-header { border-bottom-color: #4caf50; }
+.column[data-location="Jurassic Park"] .count         { color: #4caf50; }
+
+.column[data-location="JIT"] .column-header { border-bottom-color: #2196f3; }
+.column[data-location="JIT"] .count         { color: #2196f3; }
+
+.column[data-location="MAL"] .column-header { border-bottom-color: #ff9800; }
+.column[data-location="MAL"] .count         { color: #ff9800; }
+
+.cards {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  overflow-y: auto;
+  padding-right: 0.25rem;
+}
+
+.cards::-webkit-scrollbar { width: 8px; }
+.cards::-webkit-scrollbar-track { background: transparent; }
+.cards::-webkit-scrollbar-thumb { background: #2a3540; border-radius: 4px; }
+
+
+.cart-card {
+  background: #243042;
+  border-radius: 12px;
+  padding: 1rem 1.1rem;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  column-gap: 0.85rem;
+  row-gap: 0.3rem;
+  align-items: center;
+  border-left: 4px solid #4a5a6c;
+  transition: background 0.4s ease, border-color 0.3s ease;
+}
+
+.cart-id {
+  grid-row: 1 / 4;
+  font-size: 2rem;
+  font-weight: 800;
+  color: #8aa5c2;
+  background: #1a2330;
+  padding: 0.6rem 0.9rem;
+  border-radius: 8px;
+  min-width: 3.5rem;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.cart-name {
+  font-size: 1.4rem;
+  font-weight: 700;
+  color: #ffffff;
+}
+
+.cart-contents {
+  font-size: 1rem;
+  color: #b0c0d0;
+}
+
+.cart-date {
+  font-size: 0.95rem;
+  color: #7a8a9a;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+
+
+.column[data-location="Jurassic Park"] .cart-card { border-left-color: #4caf50; }
+.column[data-location="JIT"]           .cart-card { border-left-color: #2196f3; }
+.column[data-location="MAL"]           .cart-card { border-left-color: #ff9800; }
+
+/* ========== OVERDUE STATE ==========
+   A cart is overdue when:
+   - today >= date_usage
+   - AND it's not in JIT or MAL
+*/
+.cart-card.overdue {
+  background: #4a1d1d;
+  border-left-color: #f44336 !important;
+  box-shadow: 0 0 0 2px rgba(244, 67, 54, 0.4),
+              0 0 20px rgba(244, 67, 54, 0.3);
+  animation: pulse-red 2s ease-in-out infinite;
+}
+
+.cart-card.overdue .cart-id       { background: #2a0f0f; color: #ffb3b3; }
+.cart-card.overdue .cart-name     { color: #ffe5e5; }
+.cart-card.overdue .cart-contents { color: #ffcccc; }
+.cart-card.overdue .cart-date     { color: #ff8a8a; font-weight: 700; }
+
+@keyframes pulse-red {
+  0%, 100% { box-shadow: 0 0 0 2px rgba(244, 67, 54, 0.4), 0 0 20px rgba(244, 67, 54, 0.3); }
+  50%      { box-shadow: 0 0 0 2px rgba(244, 67, 54, 0.7), 0 0 30px rgba(244, 67, 54, 0.5); }
+}
+
+/* Highlight when a cart just moved to a new column */
+.cart-card.just-moved {
+  animation: flash-green 1.5s ease-out;
+}
+
+@keyframes flash-green {
+  0%   { background: rgba(76, 175, 80, 0.5); transform: scale(1.03); }
+  100% { transform: scale(1); }
+}
+
+.cards:empty::after {
+  content: "No carts here";
+  color: #4a5a6c;
+  font-style: italic;
+  text-align: center;
+  padding: 2rem 1rem;
+  font-size: 1rem;
+}

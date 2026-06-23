@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <title>Cart Tracker - Live Dashboard</title>
+        <link rel="stylesheet" href="/static/styles.css">
+    </head>
+    <body>
+        <header>
+            <div class="title">
+                <h1>Cart Tracker</h1>
+            </div>
+            <div class='status'>
+                <span id="connection-status" class="connecting">Connecting...</span>
+                <span id="updated">Awaiting first update...</span>
+            </div>
+        </header>
+
+        <main id="board">
+            <section class="column" data-location="Jurassic Park">
+                <div class="column-header">
+                    <span class="icon">🦖</span>
+                    <h2>Jurassic Park</h2>
+                    <span class="count" data-count-for="Jurassic Park">0</span>
+                </div>
+                <div class="cards" data-cards-for="Jurassic Park"></div>
+            </section>
+
+            <section class="column" data-location="JIT">
+                <div class="column-header">
+                    <span class="icon">📦</span>
+                    <h2>JIT</h2>
+                    <span class="count" data-count-for="JIT">0</span>
+                </div>
+                <div class="cards" data-cards-for="JIT"></div>
+            </section>
+
+            <section class="column" data-location="MAL">
+                <div class="column-header">
+                    <span class="icon">🏷️</span>
+                    <h2>JIT</h2>
+                    <span class="count" data-count-for="MAL">0</span>
+                </div>
+                <div class="cards" data-cards-for="MAL"></div>
+            </section>
+        </main>
+
+        <script src="/static/app.js"></script>
+    </body>
+</html>
