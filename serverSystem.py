@@ -1,3 +1,7 @@
+from gevent import monkey
+monkey.patch_all()
+from gevent.pywsgi import WSGIServer
+
 import datetime
 import sqlite3
 import logging
@@ -39,7 +43,7 @@ load_dotenv()
 
 flasking = False
 DB_FILE: Final = "trackingFile.db"
-PORT_NAME: Final = 5000
+PORT: Final = 5000
 
 sseSubs = []
 sseLock = threading.Lock()
@@ -114,8 +118,16 @@ def init_database():
             (7, None, 'Hummingbird', 'Theta', datetime.date(2026, 6, 12).strftime("%m-%d-%Y"), Locale.InTransit.toString()),
             (8, None, 'Owl', 'Iota', datetime.date(2026, 6, 13).strftime("%m-%d-%Y"), Locale.InTransit.toString())
         ]
-        cursor.executemany('INSERT INTO carts VALUES (?, ?, ?, ?, ?)', imagCarts)
+        cursor.executemany('INSERT INTO carts VALUES (?, ?, ?, ?, ?, ?)', imagCarts)
         conn.commit()
+    
+    # One-time migration: convert old "In Transit" entries to "MAL"
+    cursor.execute("UPDATE carts   SET current_location = 'MAL' WHERE current_location = 'In Transit'")
+    cursor.execute("UPDATE history SET old_location     = 'MAL' WHERE old_location     = 'In Transit'")
+    cursor.execute("UPDATE history SET new_location     = 'MAL' WHERE new_location     = 'In Transit'")
+    if cursor.rowcount > 0:
+        print(f"Migrated old 'In Transit' entries to 'MAL'.")
+    conn.commit()
     conn.close()
 
 @app.route('/scan', methods = ['POST'])
@@ -340,25 +352,34 @@ def dashboard():
 @app.route('/api/stream')
 def event_stream():
     def gen():
-        q = queue.Queue(maxSize=10)
+        q = queue.Queue(maxsize=10)
         with sseLock:
             sseSubs.append(q)
-        
+
         try:
+            # Send initial state immediately on connect
             initial = getFullState()
-            yield f"event: snapshot\ndata: {json.dumps(data)}\n\n"
+            yield f"event: snapshot\ndata: {json.dumps(initial)}\n\n"
 
             while True:
                 try:
                     data = q.get(timeout=30)
-                    yield f"event: snapshot\ndata: {json.dumps(data)}\n\n"
                 except queue.Empty:
-                    # keeps connection alive thru proxies
-                    yield": hearbeat\n\n"
+                    # Timed out waiting - send a heartbeat and loop again
+                    yield ": heartbeat\n\n"
+                    continue
+
+                # We only reach here if q.get() actually returned data
+                yield f"event: snapshot\ndata: {json.dumps(data)}\n\n"
+
+        except GeneratorExit:
+            # Client disconnected - clean exit
+            pass
         finally:
             with sseLock:
                 if q in sseSubs:
                     sseSubs.remove(q)
+
     return Response(
         gen(),
         mimetype='text/event-stream',
@@ -383,17 +404,13 @@ if __name__ == '__main__':
     print("=" * 60)
 
     try:
-        import asyncio
-        from hypercorn.config import Config
-        from hypercorn.asyncio import serve as hypercorn_serve
-        
-        config = Config()
-        config.bind = [f"0.0.0.0:{PORT}"]
-        config.certfile = "cert.pem"
-        config.keyfile  = "key.pem"
-        config.workers  = 1  # Flask isn't async, keep this 1
-        
-        asyncio.run(hypercorn_serve(app, config))
+        http_server = WSGIServer(
+            ('0.0.0.0', PORT),
+            app,
+            certfile='cert.pem',
+            keyfile='key.pem'
+        )
+        http_server.serve_forever()
     except KeyboardInterrupt:
         print("\nShutting down...")
     

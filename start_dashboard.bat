@@ -15,6 +15,8 @@ if %errorlevel%==0 (
                  --ignore-certificate-errors --no-first-run ^
                  "https://localhost:5000/"
 ) else (
-    start msedge --kiosk "https://localhost:5000/" --edge-kiosk-type=fullscreen ^
-                 --no-first-run
+    start msedge --kiosk "https://localhost:5000/" ^
+                 --edge-kiosk-type=fullscreen ^
+                 --no-first-run ^
+                 --ignore-certificate-errors
 )
