@@ -1,14 +1,18 @@
+// ============================================================
+// Cart Tracker - SSE-driven dashboard
+// ============================================================
+
 let previousLocations = {};
 let eventSource = null;
 let reconnectTimer = null;
 
+// ---------- helpers ----------
 
-function escapeHtml(s)
-{
-    return String(s ?? '').replace(/[&<>"']/g, c => ({
-        '&': '&amp;', '<': '&lt;', '>': '&gt;',
-        '"': '&quot;', "'": '&#39;'
-    }[c]));
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;',
+    '"': '&quot;', "'": '&#39;'
+  }[c]));
 }
 
 function setStatus(cls, text) {
@@ -20,26 +24,31 @@ function setStatus(cls, text) {
 
 function parseUseDate(s) {
   if (!s) return null;
-
   const parts = s.split('-');
   if (parts.length !== 3) return null;
-
   const [mm, dd, yyyy] = parts.map(Number);
   if (!mm || !dd || !yyyy) return null;
-
   return new Date(yyyy, mm - 1, dd);
 }
 
 function isOverdue(cart) {
-  if (cart.current_location === 'JIT' || cart.current_location === 'MAL') {
-    return false;
-  }
+  return false;
   const useBy = parseUseDate(cart.date_usage);
   if (!useBy) return false;
   const today = new Date();
   today.setHours(0, 0, 0, 0);
-  return today >= useBy;
+  
+  if (cart.current_location === 'JIT' || cart.current_location === 'MAL') {
+    return today >= useBy;
+  }
+  if (cart.current_location === 'Jurassic Park') {
+    const tda = today;
+    tda.setDate(date.getDate() - 3);
+    return today >= tda;
+  }
 }
+
+// ---------- rendering ----------
 
 function cartCardHtml(cart, justMoved) {
   const overdue = isOverdue(cart);
@@ -49,8 +58,7 @@ function cartCardHtml(cart, justMoved) {
 
   return `
     <div class="${classes.join(' ')}" data-cart-id="${cart.id}">
-      <div class="cart-id">#${cart.id}</div>
-      <div class="cart-name">${escapeHtml(cart.name)}</div>
+      <div class="cart-id">ID: ${cart.id}</div>
       <div class="cart-contents">${escapeHtml(cart.contents)}</div>
       <div class="cart-date">📅 ${escapeHtml(cart.date_usage)}</div>
     </div>`;
@@ -76,7 +84,10 @@ function renderBoard(carts) {
       return cartCardHtml(cart, wasElsewhere);
     }).join('');
 
-    countEl.textContent = cartsHere.length;
+    // Tell the CSS how many cards are here so it can pick a good grid layout
+    cardsContainer.setAttribute('data-count', cartsHere.length);
+
+    countEl.textContent = "Carts: " + cartsHere.length;
   });
 
   Object.keys(byLocation).forEach(loc => {
@@ -103,7 +114,8 @@ function handleSnapshot(payload) {
   setStatus('ok', 'Connected');
 }
 
-// SSE Connection
+// ---------- SSE connection ----------
+
 function connect() {
   if (eventSource) eventSource.close();
 
