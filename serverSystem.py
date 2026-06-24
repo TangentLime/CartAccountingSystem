@@ -108,15 +108,15 @@ def init_database():
     if cursor.fetchone()[0] == 0:
         print("Initializing the 9 carts...")
         imagCarts = [
-            (0, None, 'Condor', 'Alpha', datetime.date(2026, 6, 5).strftime("%m-%d-%Y"), Locale.InTransit.toString()),
-            (1, None, 'Albatross', 'Beta', datetime.date(2026, 6, 6).strftime("%m-%d-%Y"), Locale.InTransit.toString()),
-            (2, None, 'Eagle', 'Gamma', datetime.date(2026, 6, 7).strftime("%m-%d-%Y"), Locale.InTransit.toString()),
-            (3, None, 'Raven', 'Delta', datetime.date(2026, 6, 8).strftime("%m-%d-%Y"), Locale.InTransit.toString()),
-            (4, None, 'Pelican', 'Epsilon', datetime.date(2026, 6, 9).strftime("%m-%d-%Y"), Locale.InTransit.toString()),
-            (5, None, 'Falcon', 'Zeta', datetime.date(2026, 6, 10).strftime("%m-%d-%Y"), Locale.InTransit.toString()),
-            (6, None, 'Sparrow', 'Eta', datetime.date(2026, 6, 11).strftime("%m-%d-%Y"), Locale.InTransit.toString()),
-            (7, None, 'Hummingbird', 'Theta', datetime.date(2026, 6, 12).strftime("%m-%d-%Y"), Locale.InTransit.toString()),
-            (8, None, 'Owl', 'Iota', datetime.date(2026, 6, 13).strftime("%m-%d-%Y"), Locale.InTransit.toString())
+            (0, '0', 'Condor', 'Alpha', datetime.date(2026, 6, 5).strftime("%m-%d-%Y"), Locale.InTransit.toString()),
+            (1, '1', 'Albatross', 'Beta', datetime.date(2026, 6, 6).strftime("%m-%d-%Y"), Locale.InTransit.toString()),
+            (2, '2', 'Eagle', 'Gamma', datetime.date(2026, 6, 7).strftime("%m-%d-%Y"), Locale.InTransit.toString()),
+            (3, '3', 'Raven', 'Delta', datetime.date(2026, 6, 8).strftime("%m-%d-%Y"), Locale.InTransit.toString()),
+            (4, '4', 'Pelican', 'Epsilon', datetime.date(2026, 6, 9).strftime("%m-%d-%Y"), Locale.InTransit.toString()),
+            (5, '5', 'Falcon', 'Zeta', datetime.date(2026, 6, 10).strftime("%m-%d-%Y"), Locale.InTransit.toString()),
+            (6, '6', 'Sparrow', 'Eta', datetime.date(2026, 6, 11).strftime("%m-%d-%Y"), Locale.InTransit.toString()),
+            (7, '7', 'Hummingbird', 'Theta', datetime.date(2026, 6, 12).strftime("%m-%d-%Y"), Locale.InTransit.toString()),
+            (8, '8', 'Owl', 'Iota', datetime.date(2026, 6, 13).strftime("%m-%d-%Y"), Locale.InTransit.toString())
         ]
         cursor.executemany('INSERT INTO carts VALUES (?, ?, ?, ?, ?, ?)', imagCarts)
         conn.commit()
@@ -135,16 +135,19 @@ def init_database():
 def processScan():
     data = request.json
     if not data:
+        print('no body')
         return jsonify({'status': 'error', 'message': 'No JSON body'}), 400
     
     nfcUid = data.get('uid')
     clientLocation = data.get('location') # In String form
 
     if nfcUid is None or clientLocation is None:
+        print('missing uid or location')
         return jsonify({'status': 'error', 'message': 'Missing UID or location'}), 400
 
     validLocations = [loc.toString() for loc in Locale]
     if clientLocation not in validLocations:
+        print('Invalid location')
         return jsonify({'status': 'error', 'message': f'Invalid location. Must be on of: {validLocations}'}), 400
     
     nfcUid = nfcUid.upper()
@@ -156,6 +159,7 @@ def processScan():
     cartData = cursor.fetchone()
     if not cartData:
         conn.close()
+        print('unknown uid')
         return jsonify({'status': 'error', 'message': 'Unknown Tag UID', 'uid': nfcUid}), 400
     
     cartId, name, lastLocation = cartData # lastLocation in String form
@@ -180,7 +184,8 @@ def log_request(response):
     print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] "
           f"{request.remote_addr} "
           f"{request.method} {request.path} "
-          f"-> {response.status_code}")
+          f"-> {response.status_code} "
+          )
     return response
 
 

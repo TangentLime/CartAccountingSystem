@@ -32,7 +32,6 @@ function parseUseDate(s) {
 }
 
 function isOverdue(cart) {
-  return false;
   const useBy = parseUseDate(cart.date_usage);
   if (!useBy) return false;
   const today = new Date();

@@ -94,7 +94,8 @@ void connectWiFi() {
   {
     WiFi.begin(WIFI_SSID);
     Serial.print(" Warning: Open Network");
-  } else 
+  } 
+  else 
   {
     WiFi.begin(WIFI_SSID, WIFI_PASS);
   }
@@ -135,8 +136,8 @@ int sendScanToServer(const String& uid) {
     return -1;
   }
 
-WiFiClientSecure client;
-client.setCACert(SERVER_CERT);
+  WiFiClientSecure client;
+  client.setCACert(SERVER_CERT);
   
   HTTPClient http;
   http.setTimeout(HTTP_TIMEOUT_MS);

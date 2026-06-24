@@ -7,6 +7,10 @@ start "Cart Tracker Server" /min cmd /k python serverSystem.py
 :: Give the server a few seconds to boot
 timeout /t 5 /nobreak >nul
 
+start "Testing Client" cmd /k python localClientTesting.py
+
+timeout /t 5 /nobreak >nul
+
 :: Launch the dashboard in fullscreen kiosk mode
 :: Try Chrome first, fall back to Edge
 where chrome >nul 2>nul
