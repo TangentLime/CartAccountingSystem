@@ -167,11 +167,15 @@ def processScan():
 
     locationChanged = lastLocation != clientLocation
     if locationChanged:
-        cursor.execute('UPDATE carts SET current_location = ? WHERE id = ?', (clientLocation, cartId))
+        # Check for move out of MAL to clear
+        if lastLocation == Locale.MAL.toString():
+            cursor.execute('UPDATE carts SET current_location = ?, contents = ?, date_usage = ? WHERE id = ?', (clientLocation, 'Empty', 'Return', cartId))
+        else:
+            cursor.execute('UPDATE carts SET current_location = ? WHERE id = ?', (clientLocation, cartId))
         cursor.execute('INSERT INTO history (cart_id, old_location, new_location, timestamp) VALUES (?, ?, ?, ?)', (cartId, lastLocation, clientLocation, timeNow))
         conn.commit()
         
-        print(f"[UPDATE] {name} moved from {lastLocation} to {clientLocation} ({timeNow})")
+        print(f"[UPDATE] ID {cartId} moved from {lastLocation} to {clientLocation} ({timeNow})")
 
     conn.close()
     if locationChanged:
@@ -406,6 +410,7 @@ def event_stream():
             'X-Accel-Buffering': 'no'
         }
     )
+
 
 if __name__ == '__main__':
     init_database()

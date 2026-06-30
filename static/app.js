@@ -24,6 +24,10 @@ function setStatus(cls, text) {
 
 function parseUseDate(s) {
   if (!s) return null;
+  if (s === 'Return')
+  {
+    return false;
+  }
   const parts = s.split('-');
   if (parts.length !== 3) return null;
   const [mm, dd, yyyy] = parts.map(Number);
@@ -84,6 +88,15 @@ function cartCardHtml(cart, justMoved) {
   }
   if (justMoved) classes.push('just-moved');
 
+  if (cart.date_usage == 'Return')
+  {
+    return `
+    <div class="${classes.join(' ')}" data-cart-id="${cart.id}">
+      <div class="cart-id">ID: ${cart.id}</div>
+      <div class="cart-contents">${escapeHtml(cart.contents)}</div>
+      <div class="cart-date">Returning...</div>
+    </div>`;
+  }
   return `
     <div class="${classes.join(' ')}" data-cart-id="${cart.id}">
       <div class="cart-id">ID: ${cart.id}</div>

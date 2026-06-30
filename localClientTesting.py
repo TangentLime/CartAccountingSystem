@@ -18,7 +18,7 @@ targetLocation = "Jurassic Park"
 
 locKeys = {'m': 'MAL', 't': 'JIT', 'p': 'Jurassic Park'}
 
-cartKeys = {str(i) for i in range(1,10)}
+cartKeys = {str(i) for i in range(0,10)}
 
 print('Starting Testing Client...')
 print('Press m, p, or t to change the target location.')
