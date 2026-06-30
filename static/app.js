@@ -36,14 +36,37 @@ function isOverdue(cart) {
   if (!useBy) return false;
   const today = new Date();
   today.setHours(0, 0, 0, 0);
+  const leadDate = new Date(useBy);
+  leadDate.setDate(leadDate.getDate() - 3);
   
-  if (cart.current_location === 'JIT' || cart.current_location === 'MAL') {
-    return today >= useBy;
+  if (cart.current_location === 'MAL') {
+    return false;
   }
-  if (cart.current_location === 'Jurassic Park') {
-    const tda = today;
-    tda.setDate(date.getDate() - 3);
-    return today >= tda;
+  else if (cart.current_location === 'JIT') {
+    return today > useBy;
+  }
+  else if (cart.current_location === 'Jurassic Park') {
+    return today > leadDate;
+  }
+}
+
+function isWarning(cart)
+{
+  const useBy = parseUseDate(cart.date_usage);
+  if (!useBy) return false;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const leadDate = new Date(useBy);
+  leadDate.setDate(leadDate.getDate() - 3);
+
+  if (cart.current_location === 'MAL') {
+    return today > useBy;
+  }
+  else if (cart.current_location === 'JIT') {
+    return today == useBy;
+  }
+  else if (cart.current_location === 'Jurassic Park') {
+    return today == leadDate;
   }
 }
 
@@ -51,8 +74,14 @@ function isOverdue(cart) {
 
 function cartCardHtml(cart, justMoved) {
   const overdue = isOverdue(cart);
+  const warning = isWarning(cart);
   const classes = ['cart-card'];
-  if (overdue)   classes.push('overdue');
+  if (overdue) {
+    classes.push('overdue')
+  }
+  else if (warning) {
+    classes.push('warning')
+  }
   if (justMoved) classes.push('just-moved');
 
   return `

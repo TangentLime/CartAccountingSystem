@@ -252,6 +252,16 @@ h1 {
   50%      { box-shadow: inset 0 0 0 3px rgba(244, 67, 54, 0.9); }
 }
 
+.cart-card.warning {
+  background: #4a3d1a;
+  border-left-color: #ffc107 !important;
+  box-shadow: inset 0 0 0 2px rgba(255, 193, 7, 0.5);
+}
+.cart-card.warning .cart-id       { color: #ffe082; }
+.cart-card.warning .cart-contents     { color: #fff3cd; }
+.cart-card.warning .cart-date     { color: #ffd54f; font-weight: 700; }
+
+
 /* ========== Just-moved ========== */
 .cart-card.just-moved {
   animation: flash-green 1.5s ease-out;

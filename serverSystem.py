@@ -181,13 +181,26 @@ def processScan():
 
 @app.after_request
 def log_request(response):
-    print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] "
-          f"{request.remote_addr} "
-          f"{request.method} {request.path} "
-          f"-> {response.status_code} "
-          )
-    return response
+    # Skip the SSE stream (it's long-lived and has no normal body)
+    if request.path == '/api/stream':
+        return response
 
+    ts = datetime.datetime.now().strftime('%H:%M:%S')
+
+    # Try to extract the response body as text
+    body_text = ""
+    try:
+        # Only log JSON responses (skip HTML pages, static files, etc.)
+        if response.content_type and 'application/json' in response.content_type:
+            raw = response.get_data(as_text=True)
+            body_text = f"  {raw}"
+    except Exception:
+        body_text = ""
+
+    print(f"[{ts}] {request.remote_addr:15s} "
+          f"{request.method:4s} {request.path:25s} -> {response.status_code}{body_text}")
+
+    return response
 
 @app.route('/enroll', methods=['POST'])
 @require_api_key
