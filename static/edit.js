@@ -7,6 +7,10 @@
 const TARGET_LOCATION = 'Jurassic Park';
 const KEY_STORAGE = 'nfc_api_key';
 
+// The JP cart-ids currently rendered. null until the first load completes, so the
+// SSE handler won't compare a live snapshot against an empty/absent baseline.
+let shownJpIds = null;
+
 // ---------- helpers ----------
 
 function escapeHtml(s) {
@@ -120,6 +124,8 @@ async function loadCarts() {
       .filter(c => c.current_location === TARGET_LOCATION)
       .sort((a, b) => a.id - b.id);
     renderRows(jpCarts);
+    shownJpIds = jpCarts.map(c => c.id);   // baseline for staleness comparison
+    hideBanner();                          // this render is now the fresh truth
     setStatus('ok', `Loaded ${jpCarts.length} cart(s)`);
   } catch (err) {
     console.error(err);
@@ -187,6 +193,50 @@ async function saveCart(cartId) {
   }
 }
 
+// ---------- staleness banner (SSE-driven) ----------
+
+function showBanner() { document.getElementById('stale-banner').hidden = false; }
+function hideBanner() { document.getElementById('stale-banner').hidden = true; }
+
+// Order-independent set equality on two id arrays.
+function sameIdSet(a, b) {
+  if (a.length !== b.length) return false;
+  const setB = new Set(b);
+  return a.every(id => setB.has(id));
+}
+
+// Subscribe to the live stream and flag when the JP membership drifts from what's
+// on screen. Deliberately does NOT re-render - the operator's in-progress edits stay
+// put; we only surface a Reload prompt. Relative URL -> same-origin HTTPS (:5000).
+function watchForChanges() {
+  const es = new EventSource('/api/stream');
+
+  // The server sends a 'reload' event after a successful edit-page save. Hold
+  // briefly first so the "✓ Saved" confirmation is visible before the refresh
+  // (the trigger is still server-driven; the delay is just display timing).
+  es.addEventListener('reload', () => setTimeout(() => location.reload(), 600));
+
+  es.addEventListener('snapshot', (e) => {
+    if (shownJpIds === null) return;   // no baseline yet; wait for the first load
+    let payload;
+    try {
+      payload = JSON.parse(e.data);
+    } catch (err) {
+      console.error('Bad SSE payload:', err);
+      return;
+    }
+    const liveJpIds = (payload.carts || [])
+      .filter(c => c.current_location === TARGET_LOCATION)
+      .map(c => c.id);
+    // Membership only: a save never changes location, so it never trips this.
+    if (sameIdSet(liveJpIds, shownJpIds)) {
+      hideBanner();
+    } else {
+      showBanner();
+    }
+  });
+}
+
 // ---------- wire up ----------
 
 document.getElementById('reload-btn').addEventListener('click', loadCarts);
@@ -194,5 +244,7 @@ document.getElementById('key-btn').addEventListener('click', () => {
   getApiKey(true);
   loadCarts();
 });
+document.getElementById('stale-reload').addEventListener('click', loadCarts);
 
 loadCarts();
+watchForChanges();

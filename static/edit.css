@@ -151,3 +151,27 @@ button:active { transform: translatey(1px); }
   text-align: center;
   padding: 2rem 0;
 }
+
+/* ========== Stale-data banner ========== */
+/* Shown when SSE reports the JP cart set changed since this list loaded.
+   Non-modal: it sits above the rows and never covers the fields being edited. */
+#stale-banner[hidden] { display: none; }   /* explicit, so the flex rule can't override */
+#stale-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.85rem;
+  padding: 0.6rem 0.9rem;
+  background: #4a3d1a;                        /* amber, matches dashboard warning tone */
+  border: 1px solid #ffc107;
+  border-radius: 8px;
+  color: #fff3cd;
+  font-weight: 600;
+}
+#stale-banner button {
+  background: #ffc107;
+  border-color: #e0a800;
+  color: #241a00;
+}
+#stale-banner button:hover { background: #ffcd39; border-color: #ffc107; }

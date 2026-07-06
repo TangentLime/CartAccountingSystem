@@ -213,18 +213,26 @@ def getFullState():
         'server_time': datetime.datetime.now().strftime("%m-%d-%Y %H:%M:%S")
     }
 
-def broadcastUpdate():
-    # Broadcast current state to each dashboard
-    payload = getFullState()
+def _broadcast(event, data):
+    # Push an (event_name, data) item to every SSE subscriber (dashboards + edit page).
     with sseLock:
         dead = []
-        for dash in sseSubs:
+        for sub in sseSubs:
             try:
-                dash.put_nowait(payload)
+                sub.put_nowait((event, data))
             except queue.Full:
-                dead.append(dash)
-        for dash in dead:
-            sseSubs.remove(dash)
+                dead.append(sub)
+        for sub in dead:
+            sseSubs.remove(sub)
+
+def broadcastUpdate():
+    # Broadcast current cart state to every dashboard/edit page
+    _broadcast('snapshot', getFullState())
+
+def broadcastReload():
+    # Tell subscribed edit page(s) to reload themselves after a successful edit-page
+    # save. Dashboards ignore this event (app.js only handles 'snapshot').
+    _broadcast('reload', {})
 
 
 # ============================================================
@@ -401,7 +409,8 @@ def updateCart(cart_id):
     conn.close()
 
     print(f"  [EDIT] Cart #{cart_id} -> contents={contents!r}, date_usage={dateUsage}")
-    broadcastUpdate()
+    broadcastUpdate()   # refresh dashboards with the new contents/date
+    broadcastReload()   # tell edit page(s) to reload with fresh data
     return jsonify({'status': 'success', 'cartId': cart_id,
                     'contents': contents, 'date_usage': dateUsage})
 
@@ -458,14 +467,14 @@ def event_stream():
 
             while True:
                 try:
-                    data = q.get(timeout=30)
+                    event, data = q.get(timeout=30)
                 except queue.Empty:
                     # Timed out waiting - send a heartbeat and loop again
                     yield ": heartbeat\n\n"
                     continue
 
-                # We only reach here if q.get() actually returned data
-                yield f"event: snapshot\ndata: {json.dumps(data)}\n\n"
+                # We only reach here if q.get() actually returned an item
+                yield f"event: {event}\ndata: {json.dumps(data)}\n\n"
 
         except GeneratorExit:
             # Client disconnected - clean exit
@@ -483,6 +492,11 @@ def event_stream():
             'X-Accel-Buffering': 'no'
         }
     )
+
+# Also expose the stream on the write app so the HTTPS edit page can subscribe
+# same-origin (an HTTP EventSource from the HTTPS page is blocked as mixed content).
+# Reuses the same generator; sseSubs is shared, so broadcasts reach both listeners.
+write_app.route('/api/stream')(event_stream)
 
 
 # ============================================================
