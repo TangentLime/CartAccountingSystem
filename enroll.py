@@ -1,6 +1,6 @@
 import requests
 
-SERVER  = "http://http://GNELTS00014685:5000/scan:5000"
+SERVER  = "http://GNELTS00014685:5001"
 API_KEY = "lVj7QgyoL06lqOFDCCKZfXwRle9WVLP0ST4R74-0gT4"
 
 ENROLLMENTS = [

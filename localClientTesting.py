@@ -6,12 +6,11 @@ import sys
 
 load_dotenv()
 API_KEY = os.environ.get('NFC_API_KEY')
-CERT_FILE = 'cert.pem'
 if not API_KEY:
     print("ERROR: NFC_API_KEY not set. Please check .env file.")
     sys.exit(1)
 
-SERVER_URL = f'https://localhost:5000/scan'
+SERVER_URL = f'http://localhost:5001/scan'
 
 
 targetLocation = "Jurassic Park"
@@ -40,7 +39,7 @@ def onPress(key):
                 "uid": key.char,
                 "location": targetLocation
             }
-            response = requests.post(SERVER_URL, json=body, headers=headers, verify=CERT_FILE)
+            response = requests.post(SERVER_URL, json=body, headers=headers)
             print(f'Moved Cart {key.char} to {targetLocation}')
         elif key.char == 'c':
             sys.exit(1)

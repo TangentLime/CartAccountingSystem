@@ -1,5 +1,6 @@
 from gevent import monkey
 monkey.patch_all()
+from gevent import spawn
 from gevent.pywsgi import WSGIServer
 
 import datetime
@@ -37,13 +38,19 @@ class Locale(Enum):
 
 testing = True
 
-app = Flask(__name__)
+# Two separate apps so each listener exposes ONLY its own routes:
+#   scanner_app   -> HTTP  (plaintext) for the NFC scanners
+#   dashboard_app -> HTTPS (TLS)       for the browser dashboard + static files
+# A scanner route therefore 404s on the HTTPS port and vice versa.
+scanner_app = Flask(__name__)
+dashboard_app = Flask(__name__)
 
 load_dotenv()
 
 flasking = False
 DB_FILE: Final = "trackingFile.db"
-PORT: Final = 5000
+PORT: Final = 5000        # HTTPS - dashboard
+HTTP_PORT: Final = 5001   # HTTP  - scanners
 
 sseSubs = []
 sseLock = threading.Lock()
@@ -130,7 +137,7 @@ def init_database():
     conn.commit()
     conn.close()
 
-@app.route('/scan', methods = ['POST'])
+@scanner_app.route('/scan', methods = ['POST'])
 @require_api_key
 def processScan():
     data = request.json
@@ -183,7 +190,6 @@ def processScan():
 
     return jsonify({'status': 'success', 'cartId': cartId, 'cartName': name, 'location': clientLocation})
 
-@app.after_request
 def log_request(response):
     # Skip the SSE stream (it's long-lived and has no normal body)
     if request.path == '/api/stream':
@@ -206,7 +212,11 @@ def log_request(response):
 
     return response
 
-@app.route('/enroll', methods=['POST'])
+# Same logger runs on both listeners
+scanner_app.after_request(log_request)
+dashboard_app.after_request(log_request)
+
+@scanner_app.route('/enroll', methods=['POST'])
 @require_api_key
 def enrollTag():
     data = request.get_json(silent=True)
@@ -248,7 +258,7 @@ def enrollTag():
     return jsonify({'status': 'success', 'cartId': cartId, 'uid': nfcUid})
 
 
-@app.route('/api/carts', methods=['GET'])
+@dashboard_app.route('/api/carts', methods=['GET'])
 @require_api_key
 def apiCarts():
     conn = sqlite3.connect(DB_FILE)
@@ -263,7 +273,7 @@ def apiCarts():
     return jsonify(carts)
 
 
-@app.route('/api/history', methods=['GET'])
+@dashboard_app.route('/api/history', methods=['GET'])
 @require_api_key
 def apiHistory():
     limit = request.args.get('limit', default=50, type=int)
@@ -285,12 +295,15 @@ def apiHistory():
     return jsonify(rows)
 
 
-@app.route('/health', methods=['GET'])
 def health():
     return jsonify({
         'status': 'ok',
         'time': datetime.datetime.now().isoformat()
     })
+
+# Health check available on both listeners
+scanner_app.route('/health', methods=['GET'])(health)
+dashboard_app.route('/health', methods=['GET'])(health)
 
 
 def prevent_sleep():
@@ -367,11 +380,11 @@ def broadcastUpdate():
         for dash in dead:
             sseSubs.remove(dash)
 
-@app.route('/')
+@dashboard_app.route('/')
 def dashboard():
     return send_from_directory('static', 'dashboard.html')
 
-@app.route('/api/stream')
+@dashboard_app.route('/api/stream')
 def event_stream():
     def gen():
         q = queue.Queue(maxsize=10)
@@ -421,20 +434,30 @@ if __name__ == '__main__':
 
     print("=" * 60)
     print("  Starting Server...")
-    print("  Cart Tracker Server (HTTPS)")
-    print(f"  Listening on: https://0.0.0.0:{PORT}")
+    print("  Cart Tracker Server")
+    print(f"  Scanners  (HTTP) : http://0.0.0.0:{HTTP_PORT}")
+    print(f"  Dashboard (HTTPS): https://0.0.0.0:{PORT}")
     print("  Press Ctrl+C to stop")
     print("=" * 60)
 
+    # Plaintext listener for the scanners (no cert)
+    http_server = WSGIServer(
+        ('0.0.0.0', HTTP_PORT),
+        scanner_app
+    )
+    # TLS listener for the dashboard
+    https_server = WSGIServer(
+        ('0.0.0.0', PORT),
+        dashboard_app,
+        certfile='cert.pem',
+        keyfile='key.pem'
+    )
+
     try:
-        http_server = WSGIServer(
-            ('0.0.0.0', PORT),
-            app,
-            certfile='cert.pem',
-            keyfile='key.pem'
-        )
-        http_server.serve_forever()
+        # Run the HTTP server in the background, block on the HTTPS one
+        spawn(http_server.serve_forever)
+        https_server.serve_forever()
     except KeyboardInterrupt:
         print("\nShutting down...")
-    
+
     print("Server Terminated.")
