@@ -1,6 +1,7 @@
 # --- Server runtime (serverSystem.py) ---
 gevent>=24.0
 Flask>=3.0
+Flask-Limiter>=3.5
 python-dotenv>=1.0
 
 # --- Certificate generation (generate_cert.py) ---

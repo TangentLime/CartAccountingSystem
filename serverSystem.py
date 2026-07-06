@@ -12,10 +12,13 @@ import os
 import sys
 import queue
 import json
+import hmac
 from typing import Final
 from enum import Enum
 from functools import wraps
 from flask import Flask, request, jsonify, send_from_directory, Response
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 from dotenv import load_dotenv
 
 
@@ -55,6 +58,19 @@ DB_FILE: Final = "trackingFile.db"
 PORT: Final = 5000        # HTTPS - dashboard
 HTTP_PORT: Final = 5001   # HTTP  - scanners
 
+MAX_SSE_SUBS: Final = 50  # cap concurrent dashboard SSE connections (anti-DoS)
+
+# Cap request body size on both listeners so a huge POST can't exhaust memory.
+scanner_app.config['MAX_CONTENT_LENGTH']   = 64 * 1024   # 64 KB
+dashboard_app.config['MAX_CONTENT_LENGTH'] = 64 * 1024
+
+# Per-IP rate limiting. In-memory storage is fine for this single gevent process;
+# limits are checked in a before_request, so floods are throttled before auth runs.
+scanner_limiter = Limiter(get_remote_address, app=scanner_app,
+                          default_limits=["120 per minute"], storage_uri="memory://")
+dashboard_limiter = Limiter(get_remote_address, app=dashboard_app,
+                            default_limits=["300 per minute"], storage_uri="memory://")
+
 sseSubs = []
 sseLock = threading.Lock()
 
@@ -79,7 +95,7 @@ def require_api_key(f):
                 'status': 'error',
                 'message': 'Missing X-API-Key header'
             }), 401
-        if provided != API_KEY:
+        if not hmac.compare_digest(provided, API_KEY):
             print(f"  [AUTH] Rejected request from {request.remote_addr} - bad API key")
             return jsonify({
                 'status': 'error',
@@ -215,6 +231,7 @@ def broadcastUpdate():
 # ============================================================
 
 @scanner_app.route('/scan', methods = ['POST'])
+@scanner_limiter.limit("60 per minute")
 @require_api_key
 def processScan():
     data = request.json
@@ -269,6 +286,7 @@ def processScan():
 
 
 @scanner_app.route('/enroll', methods=['POST'])
+@scanner_limiter.limit("20 per minute")
 @require_api_key
 def enrollTag():
     data = request.get_json(silent=True)
@@ -338,6 +356,7 @@ def apiCarts():
 
 
 @dashboard_app.route('/api/carts/<int:cart_id>', methods=['PATCH'])
+@dashboard_limiter.limit("30 per minute")
 @require_api_key
 def updateCart(cart_id):
     """Edit a JP cart's contents and use-by date from the /edit page."""
@@ -411,11 +430,17 @@ def apiHistory():
 
 @dashboard_app.route('/api/stream')
 def event_stream():
-    def gen():
-        q = queue.Queue(maxsize=10)
-        with sseLock:
-            sseSubs.append(q)
+    # Register this subscriber up front (in the route body, not inside gen()) so the
+    # capacity check and the append happen atomically under the lock. Doing it in gen()
+    # would defer registration until the response starts streaming, making the cap racy.
+    q = queue.Queue(maxsize=10)
+    with sseLock:
+        if len(sseSubs) >= MAX_SSE_SUBS:
+            return jsonify({'status': 'error',
+                            'message': 'Too many dashboard connections'}), 503
+        sseSubs.append(q)
 
+    def gen():
         try:
             # Send initial state immediately on connect
             initial = getFullState()

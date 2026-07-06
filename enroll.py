@@ -1,6 +1,9 @@
 import requests
 import os
 from typing import Final
+from dotenv import load_dotenv
+
+load_dotenv()
 
 SERVER  = "http://GNELTS00014685:5001"
 API_KEY: Final = os.environ.get('NFC_API_KEY')

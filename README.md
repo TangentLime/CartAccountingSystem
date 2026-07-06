@@ -312,7 +312,15 @@ Same heartbeat as the scanner listener.
 | `PORT` | `5000` | HTTPS port — dashboard listener |
 | `HTTP_PORT` | `5001` | HTTP port — scanner listener |
 | `testing` | `True` | When `True`, skip keep-awake + backup threads |
+| `MAX_SSE_SUBS` | `50` | Max concurrent dashboard SSE connections; beyond this, `/api/stream` returns `503` (anti-DoS) |
+| `MAX_CONTENT_LENGTH` | `64 KB` | Request-body cap on both listeners; larger POSTs get `413` (anti-DoS) |
 | `Locale` enum | `InTransit`, `JurassicPark`, `JIT`, `MAL` | Valid location values. On startup any legacy `In Transit` rows are migrated to `MAL`. |
+
+**Rate limiting:** the API is rate-limited per client IP via `flask-limiter` (in-memory).
+Defaults: scanner listener 120/min, dashboard listener 300/min, with tighter caps on
+`POST /scan` (60/min), `POST /enroll` (20/min), and `PATCH /api/carts/<id>` (30/min).
+Exceeding a limit returns `429`. All values are tunable constants/decorators in
+`serverSystem.py`.
 
 ### Client (`include/config.h`)
 
