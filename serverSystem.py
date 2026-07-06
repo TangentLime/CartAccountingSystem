@@ -5,7 +5,6 @@ from gevent.pywsgi import WSGIServer
 
 import datetime
 import sqlite3
-import logging
 import threading
 import time
 import ctypes
@@ -18,6 +17,11 @@ from enum import Enum
 from functools import wraps
 from flask import Flask, request, jsonify, send_from_directory, Response
 from dotenv import load_dotenv
+
+
+# ============================================================
+#  Configuration & globals
+# ============================================================
 
 class Locale(Enum):
     InTransit = 0
@@ -34,7 +38,7 @@ class Locale(Enum):
             return "JIT"
         elif self.value == 3:
             return "MAL"
-        
+
 
 testing = True
 
@@ -47,7 +51,6 @@ dashboard_app = Flask(__name__)
 
 load_dotenv()
 
-flasking = False
 DB_FILE: Final = "trackingFile.db"
 PORT: Final = 5000        # HTTPS - dashboard
 HTTP_PORT: Final = 5001   # HTTP  - scanners
@@ -61,6 +64,10 @@ if not API_KEY:
     print("ERROR: NFC_API_KEY not set. Please check .env file.")
     sys.exit(1)
 
+
+# ============================================================
+#  Decorators & middleware
+# ============================================================
 
 def require_api_key(f):
     """Decorator that rejects any request without a valid X-API-Key header."""
@@ -80,6 +87,38 @@ def require_api_key(f):
             }), 401
         return f(*args, **kwargs)
     return decorated
+
+
+def log_request(response):
+    # Skip the SSE stream (it's long-lived and has no normal body)
+    if request.path == '/api/stream':
+        return response
+
+    ts = datetime.datetime.now().strftime('%H:%M:%S')
+
+    # Try to extract the response body as text
+    body_text = ""
+    try:
+        # Only log JSON responses (skip HTML pages, static files, etc.)
+        if response.content_type and 'application/json' in response.content_type:
+            raw = response.get_data(as_text=True)
+            body_text = f"  {raw}"
+    except Exception:
+        body_text = ""
+
+    print(f"[{ts}] {request.remote_addr:15s} "
+          f"{request.method:4s} {request.path:25s} -> {response.status_code}{body_text}")
+
+    return response
+
+# Same logger runs on both listeners
+scanner_app.after_request(log_request)
+dashboard_app.after_request(log_request)
+
+
+# ============================================================
+#  Database
+# ============================================================
 
 def init_database():
     conn = sqlite3.connect(DB_FILE)
@@ -127,7 +166,7 @@ def init_database():
         ]
         cursor.executemany('INSERT INTO carts VALUES (?, ?, ?, ?, ?, ?)', imagCarts)
         conn.commit()
-    
+
     # One-time migration: convert old "In Transit" entries to "MAL"
     cursor.execute("UPDATE carts   SET current_location = 'MAL' WHERE current_location = 'In Transit'")
     cursor.execute("UPDATE history SET old_location     = 'MAL' WHERE old_location     = 'In Transit'")
@@ -137,6 +176,44 @@ def init_database():
     conn.commit()
     conn.close()
 
+
+# ============================================================
+#  Shared state / SSE helpers
+# ============================================================
+
+def getFullState():
+    # Build JSON for dashboards on connect and each change
+    conn = sqlite3.connect(DB_FILE)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT id, name, contents, date_usage, current_location FROM carts ORDER BY id
+    ''')
+    carts = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+    return {
+        'carts': carts,
+        'server_time': datetime.datetime.now().strftime("%m-%d-%Y %H:%M:%S")
+    }
+
+def broadcastUpdate():
+    # Broadcast current state to each dashboard
+    payload = getFullState()
+    with sseLock:
+        dead = []
+        for dash in sseSubs:
+            try:
+                dash.put_nowait(payload)
+            except queue.Full:
+                dead.append(dash)
+        for dash in dead:
+            sseSubs.remove(dash)
+
+
+# ============================================================
+#  Scanner routes (HTTP)
+# ============================================================
+
 @scanner_app.route('/scan', methods = ['POST'])
 @require_api_key
 def processScan():
@@ -144,7 +221,7 @@ def processScan():
     if not data:
         print('no body')
         return jsonify({'status': 'error', 'message': 'No JSON body'}), 400
-    
+
     nfcUid = data.get('uid')
     clientLocation = data.get('location') # In String form
 
@@ -156,7 +233,7 @@ def processScan():
     if clientLocation not in validLocations:
         print('Invalid location')
         return jsonify({'status': 'error', 'message': f'Invalid location. Must be on of: {validLocations}'}), 400
-    
+
     nfcUid = nfcUid.upper()
 
     conn = sqlite3.connect(DB_FILE)
@@ -168,7 +245,7 @@ def processScan():
         conn.close()
         print('unknown uid')
         return jsonify({'status': 'error', 'message': 'Unknown Tag UID', 'uid': nfcUid}), 400
-    
+
     cartId, name, lastLocation = cartData # lastLocation in String form
     timeNow = datetime.datetime.now().strftime('%m-%d-%Y %H:%M:%S')
 
@@ -181,7 +258,7 @@ def processScan():
             cursor.execute('UPDATE carts SET current_location = ? WHERE id = ?', (clientLocation, cartId))
         cursor.execute('INSERT INTO history (cart_id, old_location, new_location, timestamp) VALUES (?, ?, ?, ?)', (cartId, lastLocation, clientLocation, timeNow))
         conn.commit()
-        
+
         print(f"[UPDATE] ID {cartId} moved from {lastLocation} to {clientLocation} ({timeNow})")
 
     conn.close()
@@ -190,31 +267,6 @@ def processScan():
 
     return jsonify({'status': 'success', 'cartId': cartId, 'cartName': name, 'location': clientLocation})
 
-def log_request(response):
-    # Skip the SSE stream (it's long-lived and has no normal body)
-    if request.path == '/api/stream':
-        return response
-
-    ts = datetime.datetime.now().strftime('%H:%M:%S')
-
-    # Try to extract the response body as text
-    body_text = ""
-    try:
-        # Only log JSON responses (skip HTML pages, static files, etc.)
-        if response.content_type and 'application/json' in response.content_type:
-            raw = response.get_data(as_text=True)
-            body_text = f"  {raw}"
-    except Exception:
-        body_text = ""
-
-    print(f"[{ts}] {request.remote_addr:15s} "
-          f"{request.method:4s} {request.path:25s} -> {response.status_code}{body_text}")
-
-    return response
-
-# Same logger runs on both listeners
-scanner_app.after_request(log_request)
-dashboard_app.after_request(log_request)
 
 @scanner_app.route('/enroll', methods=['POST'])
 @require_api_key
@@ -258,6 +310,18 @@ def enrollTag():
     return jsonify({'status': 'success', 'cartId': cartId, 'uid': nfcUid})
 
 
+# ============================================================
+#  Dashboard routes (HTTPS)
+# ============================================================
+
+@dashboard_app.route('/')
+def dashboard():
+    return send_from_directory('static', 'dashboard.html')
+
+@dashboard_app.route('/edit')
+def edit_page():
+    return send_from_directory('static', 'edit.html')
+
 @dashboard_app.route('/api/carts', methods=['GET'])
 @require_api_key
 def apiCarts():
@@ -271,6 +335,56 @@ def apiCarts():
     carts = [dict(row) for row in cursor.fetchall()]
     conn.close()
     return jsonify(carts)
+
+
+@dashboard_app.route('/api/carts/<int:cart_id>', methods=['PATCH'])
+@require_api_key
+def updateCart(cart_id):
+    """Edit a JP cart's contents and use-by date from the /edit page."""
+    data = request.get_json(silent=True)
+    if not data:
+        return jsonify({'status': 'error', 'message': 'No JSON body'}), 400
+
+    contents = data.get('contents')
+    dateUsage = data.get('date_usage')
+
+    # Validate contents: must be a non-empty string
+    if not isinstance(contents, str) or not contents.strip():
+        return jsonify({'status': 'error', 'message': 'contents must be a non-empty string'}), 400
+    contents = contents.strip()
+
+    # Validate date: must match the MM-DD-YYYY format the dashboard parser expects
+    if not isinstance(dateUsage, str):
+        return jsonify({'status': 'error', 'message': 'date_usage is required'}), 400
+    dateUsage = dateUsage.strip()
+    try:
+        datetime.datetime.strptime(dateUsage, '%m-%d-%Y')
+    except ValueError:
+        return jsonify({'status': 'error', 'message': 'date_usage must be MM-DD-YYYY'}), 400
+
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+
+    # Confirm the cart exists and is currently in Jurassic Park (edit scope)
+    cursor.execute('SELECT current_location FROM carts WHERE id = ?', (cart_id,))
+    row = cursor.fetchone()
+    if not row:
+        conn.close()
+        return jsonify({'status': 'error', 'message': f'No cart with id {cart_id}'}), 404
+    if row[0] != Locale.JurassicPark.toString():
+        conn.close()
+        return jsonify({'status': 'error',
+                        'message': 'Only carts in Jurassic Park can be edited here'}), 403
+
+    cursor.execute('UPDATE carts SET contents = ?, date_usage = ? WHERE id = ?',
+                   (contents, dateUsage, cart_id))
+    conn.commit()
+    conn.close()
+
+    print(f"  [EDIT] Cart #{cart_id} -> contents={contents!r}, date_usage={dateUsage}")
+    broadcastUpdate()
+    return jsonify({'status': 'success', 'cartId': cart_id,
+                    'contents': contents, 'date_usage': dateUsage})
 
 
 @dashboard_app.route('/api/history', methods=['GET'])
@@ -295,6 +409,51 @@ def apiHistory():
     return jsonify(rows)
 
 
+@dashboard_app.route('/api/stream')
+def event_stream():
+    def gen():
+        q = queue.Queue(maxsize=10)
+        with sseLock:
+            sseSubs.append(q)
+
+        try:
+            # Send initial state immediately on connect
+            initial = getFullState()
+            yield f"event: snapshot\ndata: {json.dumps(initial)}\n\n"
+
+            while True:
+                try:
+                    data = q.get(timeout=30)
+                except queue.Empty:
+                    # Timed out waiting - send a heartbeat and loop again
+                    yield ": heartbeat\n\n"
+                    continue
+
+                # We only reach here if q.get() actually returned data
+                yield f"event: snapshot\ndata: {json.dumps(data)}\n\n"
+
+        except GeneratorExit:
+            # Client disconnected - clean exit
+            pass
+        finally:
+            with sseLock:
+                if q in sseSubs:
+                    sseSubs.remove(q)
+
+    return Response(
+        gen(),
+        mimetype='text/event-stream',
+        headers={
+            'Cache-Control': 'no-cache',
+            'X-Accel-Buffering': 'no'
+        }
+    )
+
+
+# ============================================================
+#  Health (both listeners)
+# ============================================================
+
 def health():
     return jsonify({
         'status': 'ok',
@@ -305,6 +464,10 @@ def health():
 scanner_app.route('/health', methods=['GET'])(health)
 dashboard_app.route('/health', methods=['GET'])(health)
 
+
+# ============================================================
+#  Background workers
+# ============================================================
 
 def prevent_sleep():
     """Tell Windows to stay awake while server is running. No admin needed."""
@@ -352,78 +515,10 @@ def backup_loop():
         except Exception as e:
             print(f"  [BACKUP ERROR] {e}")
 
-def getFullState():
-    # Build JSON for dashboards on connect and each change
-    conn = sqlite3.connect(DB_FILE)
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
-    cursor.execute('''
-        SELECT id, name, contents, date_usage, current_location FROM carts ORDER BY id               
-    ''')
-    carts = [dict(row) for row in cursor.fetchall()]
-    conn.close()
-    return {
-        'carts': carts,
-        'server_time': datetime.datetime.now().strftime("%m-%d-%Y %H:%M:%S")
-    }
 
-def broadcastUpdate():
-    # Broadcast current state to each dashboard
-    payload = getFullState()
-    with sseLock:
-        dead = []
-        for dash in sseSubs:
-            try:
-                dash.put_nowait(payload)
-            except queue.Full:
-                dead.append(dash)
-        for dash in dead:
-            sseSubs.remove(dash)
-
-@dashboard_app.route('/')
-def dashboard():
-    return send_from_directory('static', 'dashboard.html')
-
-@dashboard_app.route('/api/stream')
-def event_stream():
-    def gen():
-        q = queue.Queue(maxsize=10)
-        with sseLock:
-            sseSubs.append(q)
-
-        try:
-            # Send initial state immediately on connect
-            initial = getFullState()
-            yield f"event: snapshot\ndata: {json.dumps(initial)}\n\n"
-
-            while True:
-                try:
-                    data = q.get(timeout=30)
-                except queue.Empty:
-                    # Timed out waiting - send a heartbeat and loop again
-                    yield ": heartbeat\n\n"
-                    continue
-
-                # We only reach here if q.get() actually returned data
-                yield f"event: snapshot\ndata: {json.dumps(data)}\n\n"
-
-        except GeneratorExit:
-            # Client disconnected - clean exit
-            pass
-        finally:
-            with sseLock:
-                if q in sseSubs:
-                    sseSubs.remove(q)
-
-    return Response(
-        gen(),
-        mimetype='text/event-stream',
-        headers={
-            'Cache-Control': 'no-cache',
-            'X-Accel-Buffering': 'no'
-        }
-    )
-
+# ============================================================
+#  Entrypoint
+# ============================================================
 
 if __name__ == '__main__':
     init_database()

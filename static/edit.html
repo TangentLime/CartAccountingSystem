@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>Cart Tracker - Edit (Jurassic Park)</title>
+        <link rel="stylesheet" href="/static/edit.css">
+    </head>
+    <body>
+        <header>
+            <div class="title">
+                <span class="icon">🦖</span>
+                <h1>Edit Carts &middot; Jurassic Park</h1>
+            </div>
+            <div class="status">
+                <span id="status" class="connecting">Loading…</span>
+                <button id="reload-btn" type="button">Reload</button>
+                <button id="key-btn" type="button" title="Change the stored API key">API Key</button>
+            </div>
+        </header>
+
+        <main id="cart-list">
+            <!-- rows injected by edit.js -->
+        </main>
+
+        <script src="/static/edit.js"></script>
+    </body>
+</html>

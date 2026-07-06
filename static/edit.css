@@ -1,0 +1,153 @@
+/* ============================================================
+   Edit page styles.
+   Shares the dashboard's dark palette (styles.css) but is a
+   SEPARATE sheet on purpose: the dashboard hides the cursor and
+   disables scrolling for an unattended kiosk display, which would
+   make this interactive editing page unusable.
+   ============================================================ */
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  min-height: 100%;
+  background: #0f1419;
+  color: #e6e6e6;
+  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+}
+
+body {
+  padding: 1.25rem 1.5rem 3rem;
+  max-width: 900px;
+  margin: 0 auto;
+}
+
+/* ========== Header ========== */
+header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-bottom: 1.25rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 2px solid #2a3540;
+}
+
+.title { display: flex; align-items: center; gap: 0.6rem; }
+.title .icon { font-size: 1.8rem; }
+
+h1 {
+  font-size: 1.6rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.status { display: flex; align-items: center; gap: 0.75rem; }
+
+#status {
+  font-weight: 600;
+  padding: 0.35rem 0.85rem;
+  border-radius: 999px;
+  font-size: 0.9rem;
+}
+#status.ok          { background: rgba(76, 175, 80, 0.15);  color: #4caf50; }
+#status.connecting  { background: rgba(255, 152, 0, 0.15);  color: #ff9800; }
+#status.error       { background: rgba(244, 67, 54, 0.15);  color: #f44336; }
+
+/* ========== Buttons ========== */
+button {
+  font-family: inherit;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #e6e6e6;
+  background: #24324a;
+  border: 1px solid #3a4a63;
+  border-radius: 8px;
+  padding: 0.45rem 0.9rem;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+button:hover  { background: #2f4160; border-color: #4a5f82; }
+button:active { transform: translatey(1px); }
+
+/* ========== Cart rows ========== */
+#cart-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+.cart-row {
+  background: rgba(36, 48, 66, 0.85);
+  border-left: 4px solid #4a5a6c;
+  border-radius: 12px;
+  padding: 0.9rem 1rem;
+  display: grid;
+  grid-template-columns: auto 1fr auto auto;
+  align-items: end;
+  gap: 0.75rem 1rem;
+}
+
+/* Stack the row on narrow screens */
+@media (max-width: 640px) {
+  .cart-row {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+}
+
+.cart-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 3.5rem;
+}
+.cart-meta .cart-id   { font-size: 0.75rem; font-weight: 800; color: #8aa5c2; }
+.cart-meta .cart-name { font-size: 1rem;    font-weight: 700; color: #ffffff; }
+
+.field { display: flex; flex-direction: column; gap: 0.25rem; }
+.field label {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #7a8a9a;
+}
+
+.field input {
+  font-family: inherit;
+  font-size: 0.95rem;
+  color: #ffffff;
+  background: #0f1723;
+  border: 1px solid #3a4a63;
+  border-radius: 8px;
+  padding: 0.5rem 0.6rem;
+  width: 100%;
+}
+.field input:focus {
+  outline: none;
+  border-color: #6a8fc2;
+  box-shadow: 0 0 0 2px rgba(106, 143, 194, 0.25);
+}
+/* Make the native date picker indicator visible on the dark theme */
+.field input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.8); }
+
+.row-msg {
+  font-size: 0.8rem;
+  font-weight: 600;
+  min-height: 1rem;
+  align-self: center;
+  white-space: nowrap;
+}
+.row-msg.ok    { color: #4caf50; }
+.row-msg.error { color: #f44336; }
+
+.save-btn { background: #2e7d32; border-color: #3a9d40; }
+.save-btn:hover { background: #369140; border-color: #46b552; }
+
+/* Empty / info states */
+.empty-note {
+  color: #7a8a9a;
+  font-style: italic;
+  text-align: center;
+  padding: 2rem 0;
+}
