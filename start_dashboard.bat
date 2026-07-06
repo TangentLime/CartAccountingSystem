@@ -16,11 +16,10 @@ timeout /t 5 /nobreak >nul
 where chrome >nul 2>nul
 if %errorlevel%==0 (
     start chrome --kiosk --noerrdialogs --disable-infobars ^
-                 --ignore-certificate-errors --no-first-run ^
-                 "https://localhost:5000/"
-) else (
-    start msedge --kiosk "https://localhost:5000/" ^
-                 --edge-kiosk-type=fullscreen ^
                  --no-first-run ^
-                 --ignore-certificate-errors
+                 "http://localhost:5001/"
+) else (
+    start msedge --kiosk "http://localhost:5001/" ^
+                 --edge-kiosk-type=fullscreen ^
+                 --no-first-run
 )

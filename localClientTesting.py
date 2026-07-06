@@ -10,7 +10,10 @@ if not API_KEY:
     print("ERROR: NFC_API_KEY not set. Please check .env file.")
     sys.exit(1)
 
-SERVER_URL = f'http://localhost:5001/scan'
+# A scan is a write -> HTTPS write port (5000). The cert covers "localhost"
+# (see generate_cert.py HOSTNAMES), so verify against cert.pem from the repo root.
+SERVER_URL = f'https://localhost:5000/scan'
+CERT = "cert.pem"
 
 
 targetLocation = "Jurassic Park"
@@ -39,7 +42,7 @@ def onPress(key):
                 "uid": key.char,
                 "location": targetLocation
             }
-            response = requests.post(SERVER_URL, json=body, headers=headers)
+            response = requests.post(SERVER_URL, json=body, headers=headers, verify=CERT)
             print(f'Moved Cart {key.char} to {targetLocation}')
         elif key.char == 'c':
             sys.exit(1)

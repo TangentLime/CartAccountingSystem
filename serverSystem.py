@@ -45,31 +45,32 @@ class Locale(Enum):
 
 testing = True
 
-# Two separate apps so each listener exposes ONLY its own routes:
-#   scanner_app   -> HTTP  (plaintext) for the NFC scanners
-#   dashboard_app -> HTTPS (TLS)       for the browser dashboard + static files
-# A scanner route therefore 404s on the HTTPS port and vice versa.
-scanner_app = Flask(__name__)
-dashboard_app = Flask(__name__)
+# Two separate apps split by OPERATION TYPE, not client type:
+#   write_app -> HTTPS (TLS)       every mutation + the edit UI (scans, enrollments, edits)
+#   read_app  -> HTTP  (plaintext) read-only viewing (dashboard + SSE + history)
+# Rationale: all writing is encrypted, all reading is unencrypted. A write route
+# therefore 404s on the HTTP read port and a read route 404s on the HTTPS write port.
+write_app = Flask(__name__)
+read_app = Flask(__name__)
 
 load_dotenv()
 
 DB_FILE: Final = "trackingFile.db"
-PORT: Final = 5000        # HTTPS - dashboard
-HTTP_PORT: Final = 5001   # HTTP  - scanners
+WRITE_PORT: Final = 5000  # HTTPS - writes (scanners, enroll, edit page + PATCH)
+READ_PORT: Final = 5001   # HTTP  - reads  (dashboard, SSE, history)
 
 MAX_SSE_SUBS: Final = 50  # cap concurrent dashboard SSE connections (anti-DoS)
 
 # Cap request body size on both listeners so a huge POST can't exhaust memory.
-scanner_app.config['MAX_CONTENT_LENGTH']   = 64 * 1024   # 64 KB
-dashboard_app.config['MAX_CONTENT_LENGTH'] = 64 * 1024
+write_app.config['MAX_CONTENT_LENGTH'] = 64 * 1024   # 64 KB
+read_app.config['MAX_CONTENT_LENGTH']  = 64 * 1024
 
 # Per-IP rate limiting. In-memory storage is fine for this single gevent process;
 # limits are checked in a before_request, so floods are throttled before auth runs.
-scanner_limiter = Limiter(get_remote_address, app=scanner_app,
-                          default_limits=["120 per minute"], storage_uri="memory://")
-dashboard_limiter = Limiter(get_remote_address, app=dashboard_app,
-                            default_limits=["300 per minute"], storage_uri="memory://")
+write_limiter = Limiter(get_remote_address, app=write_app,
+                        default_limits=["120 per minute"], storage_uri="memory://")
+read_limiter = Limiter(get_remote_address, app=read_app,
+                       default_limits=["300 per minute"], storage_uri="memory://")
 
 sseSubs = []
 sseLock = threading.Lock()
@@ -128,8 +129,8 @@ def log_request(response):
     return response
 
 # Same logger runs on both listeners
-scanner_app.after_request(log_request)
-dashboard_app.after_request(log_request)
+write_app.after_request(log_request)
+read_app.after_request(log_request)
 
 
 # ============================================================
@@ -227,11 +228,11 @@ def broadcastUpdate():
 
 
 # ============================================================
-#  Scanner routes (HTTP)
+#  Write routes (HTTPS) - scans, enrollments, edits
 # ============================================================
 
-@scanner_app.route('/scan', methods = ['POST'])
-@scanner_limiter.limit("60 per minute")
+@write_app.route('/scan', methods = ['POST'])
+@write_limiter.limit("60 per minute")
 @require_api_key
 def processScan():
     data = request.json
@@ -285,8 +286,8 @@ def processScan():
     return jsonify({'status': 'success', 'cartId': cartId, 'cartName': name, 'location': clientLocation})
 
 
-@scanner_app.route('/enroll', methods=['POST'])
-@scanner_limiter.limit("20 per minute")
+@write_app.route('/enroll', methods=['POST'])
+@write_limiter.limit("20 per minute")
 @require_api_key
 def enrollTag():
     data = request.get_json(silent=True)
@@ -329,18 +330,17 @@ def enrollTag():
 
 
 # ============================================================
-#  Dashboard routes (HTTPS)
+#  Write routes (HTTPS) - the edit page and its saves
 # ============================================================
 
-@dashboard_app.route('/')
-def dashboard():
-    return send_from_directory('static', 'dashboard.html')
-
-@dashboard_app.route('/edit')
+@write_app.route('/edit')
 def edit_page():
     return send_from_directory('static', 'edit.html')
 
-@dashboard_app.route('/api/carts', methods=['GET'])
+# GET /api/carts is a read, but it lives on the HTTPS write app because the edit
+# page (served over HTTPS) fetches it same-origin. Serving it from the HTTP read
+# app would make the HTTPS page issue an HTTP request -> blocked as mixed content.
+@write_app.route('/api/carts', methods=['GET'])
 @require_api_key
 def apiCarts():
     conn = sqlite3.connect(DB_FILE)
@@ -355,8 +355,8 @@ def apiCarts():
     return jsonify(carts)
 
 
-@dashboard_app.route('/api/carts/<int:cart_id>', methods=['PATCH'])
-@dashboard_limiter.limit("30 per minute")
+@write_app.route('/api/carts/<int:cart_id>', methods=['PATCH'])
+@write_limiter.limit("30 per minute")
 @require_api_key
 def updateCart(cart_id):
     """Edit a JP cart's contents and use-by date from the /edit page."""
@@ -406,8 +406,18 @@ def updateCart(cart_id):
                     'contents': contents, 'date_usage': dateUsage})
 
 
-@dashboard_app.route('/api/history', methods=['GET'])
-@require_api_key
+# ============================================================
+#  Read routes (HTTP) - dashboard, live stream, history
+# ============================================================
+
+@read_app.route('/')
+def dashboard():
+    return send_from_directory('static', 'dashboard.html')
+
+
+# Open (no API key): a key on an unencrypted channel protects nothing, and this
+# exposes the same movement data the dashboard/SSE already shows openly.
+@read_app.route('/api/history', methods=['GET'])
 def apiHistory():
     limit = request.args.get('limit', default=50, type=int)
     limit = max(1, min(limit, 500))  # clamp
@@ -428,7 +438,7 @@ def apiHistory():
     return jsonify(rows)
 
 
-@dashboard_app.route('/api/stream')
+@read_app.route('/api/stream')
 def event_stream():
     # Register this subscriber up front (in the route body, not inside gen()) so the
     # capacity check and the append happen atomically under the lock. Doing it in gen()
@@ -486,8 +496,8 @@ def health():
     })
 
 # Health check available on both listeners
-scanner_app.route('/health', methods=['GET'])(health)
-dashboard_app.route('/health', methods=['GET'])(health)
+write_app.route('/health', methods=['GET'])(health)
+read_app.route('/health', methods=['GET'])(health)
 
 
 # ============================================================
@@ -555,28 +565,28 @@ if __name__ == '__main__':
     print("=" * 60)
     print("  Starting Server...")
     print("  Cart Tracker Server")
-    print(f"  Scanners  (HTTP) : http://0.0.0.0:{HTTP_PORT}")
-    print(f"  Dashboard (HTTPS): https://0.0.0.0:{PORT}")
+    print(f"  Writes (HTTPS): https://0.0.0.0:{WRITE_PORT}  (scans, enroll, edit)")
+    print(f"  Reads  (HTTP) : http://0.0.0.0:{READ_PORT}  (dashboard, stream, history)")
     print("  Press Ctrl+C to stop")
     print("=" * 60)
 
-    # Plaintext listener for the scanners (no cert)
-    http_server = WSGIServer(
-        ('0.0.0.0', HTTP_PORT),
-        scanner_app
+    # Plaintext listener for reads (dashboard) - no cert
+    read_server = WSGIServer(
+        ('0.0.0.0', READ_PORT),
+        read_app
     )
-    # TLS listener for the dashboard
-    https_server = WSGIServer(
-        ('0.0.0.0', PORT),
-        dashboard_app,
+    # TLS listener for writes (scanners, edits)
+    write_server = WSGIServer(
+        ('0.0.0.0', WRITE_PORT),
+        write_app,
         certfile='cert.pem',
         keyfile='key.pem'
     )
 
     try:
-        # Run the HTTP server in the background, block on the HTTPS one
-        spawn(http_server.serve_forever)
-        https_server.serve_forever()
+        # Run the plaintext read server in the background, block on the TLS write one
+        spawn(read_server.serve_forever)
+        write_server.serve_forever()
     except KeyboardInterrupt:
         print("\nShutting down...")
 

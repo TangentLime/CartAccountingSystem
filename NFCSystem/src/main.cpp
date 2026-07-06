@@ -20,13 +20,18 @@
 #include <Adafruit_PN532.h>
 #include <WiFi.h>
 #include <HTTPClient.h>
-#include <WiFiClient.h>
+#include <WiFiClientSecure.h>
 #include <ArduinoJson.h>
+#include <time.h>
 
 #include "config.h"
 
 // PN532 over I2C - no SS or IRQ pins
 Adafruit_PN532 nfc(-1, -1);
+
+// TLS client for HTTPS writes to the server. The server's self-signed cert is
+// pinned via client.setCACert(SERVER_CERT) in setup() (see the TLS setup block).
+WiFiClientSecure client;
 
 // Debounce state for repeated scans of the same tag
 String   lastUid     = "";
@@ -136,8 +141,7 @@ int sendScanToServer(const String& uid) {
     return -1;
   }
 
-  WiFiClient client;
-
+  // Reuses the global WiFiClientSecure (cert pinned in setup()).
   HTTPClient http;
   http.setTimeout(HTTP_TIMEOUT_MS);
   if (!http.begin(client, SERVER_URL)) {
@@ -207,6 +211,38 @@ void setup() {
   nfc.SAMConfig();
 
   connectWiFi();
+
+  // ---- TLS setup (cert pinning) --------------------------------------------
+  // The scanner writes over HTTPS and pins the server's self-signed cert with
+  // client.setCACert(SERVER_CERT). But setCACert() validates the cert's
+  // notBefore/notAfter dates against the device clock, and a freshly-booted
+  // ESP32 believes it's Jan 1 1970 - so a perfectly valid 2026 cert looks
+  // "not yet valid" and the handshake fails until the clock is real. So we sync
+  // time over NTP first, then pin the cert.
+  if (WiFi.status() == WL_CONNECTED) {
+    // 1. Start an NTP sync (UTC; cert date checks only need correct absolute time)
+    configTime(0, 0, "pool.ntp.org", "time.nist.gov");
+
+    // 2. Wait until the clock is real. 1700000000 = late 2023, so any genuine
+    //    "now" clears it while the 1970 boot value never will. Bounded so a
+    //    dead NTP server can't hang the scanner forever.
+    Serial.print("Syncing time for TLS");
+    uint32_t start = millis();
+    while (time(nullptr) < 1700000000 && millis() - start < 15000) {
+      delay(200);
+      Serial.print(".");
+    }
+    if (time(nullptr) < 1700000000) {
+      Serial.println("\n  WARNING: time not synced - TLS cert validation may fail");
+    } else {
+      Serial.println(" done");
+    }
+
+    // 3. Pin the server's self-signed cert. Handshakes now verify the server
+    //    presents exactly this cert (real MITM protection on the write path).
+    client.setCACert(SERVER_CERT);
+  }
+  // --------------------------------------------------------------------------
 
   beepBootHappy();
   Serial.println("Ready. Scan a tag.\n");

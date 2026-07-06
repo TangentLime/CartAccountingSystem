@@ -5,8 +5,16 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-SERVER  = "http://GNELTS00014685:5001"
+# Enrollment is a write -> HTTPS write port (5000). Use the hostname the cert
+# was issued for (not an IP), since the self-signed cert covers hostnames only.
+SERVER  = "https://GNELTS00014685:5000"
 API_KEY: Final = os.environ.get('NFC_API_KEY')
+
+# Verify TLS against the server's own cert (run this from the repo root, where
+# cert.pem lives). This pins the connection the same way the ESP32 does, so the
+# API key isn't exposed to a man-in-the-middle. Swap to verify=False only if you
+# knowingly accept an unverified (but still encrypted) connection.
+CERT: Final = "cert.pem"
 
 ENROLLMENTS = [
     # Examples
@@ -20,6 +28,7 @@ for cart_id, uid in ENROLLMENTS:
     r = requests.post(
         f"{SERVER}/enroll",
         headers={"X-API-Key": API_KEY},
-        json={"cartId": cart_id, "uid": uid}
+        json={"cartId": cart_id, "uid": uid},
+        verify=CERT
     )
     print(f"Cart {cart_id} <- {uid}: {r.status_code} {r.text}")

@@ -3,23 +3,29 @@
 A minimal NFC-based cart tracking system. ESP32 scanner stations read NFC tags attached to carts and report their locations to a Flask server, which logs movements to a SQLite database and drives a live browser dashboard.
 
 ```
-┌─────────────────┐   HTTP  :5001   ┌──────────────────────────┐
+┌─────────────────┐   HTTPS :5000   ┌──────────────────────────┐
 │  ESP32 Scanner  │ ──────────────> │   Flask Server (Windows) │
 │  + PN532 NFC    │   POST /scan    │   gevent, 2 listeners     │
-│  + KY-006 Buzzer│                 │   + SQLite (WAL)          │
+│  + KY-006 Buzzer│   (encrypted)   │   + SQLite (WAL)          │
 └─────────────────┘                 │   + daily backups        │
    (one per location)               └──────────────────────────┘
-                                                 ▲
-┌─────────────────┐   HTTPS :5000                │
-│  Browser /      │ ─────────────────────────────┘
-│  Kiosk display  │   GET /  (live dashboard)  ·  GET /edit
-└─────────────────┘
+                                          ▲              ▲
+┌──────────────────┐  HTTPS :5000 (write) │              │ HTTP :5001 (read)
+│  Edit computer   │ ─────────────────────┘              │
+│  GET /edit + save│                                     │
+└──────────────────┘   ┌─────────────────┐  GET /  ·  /api/stream
+                       │ Dashboard display│ ────────────┘
+                       │ (any browser/TV) │  (live board, plaintext)
+                       └─────────────────┘
 ```
 
-The server runs **two listeners on one process**: a plaintext **HTTP** listener on port
-**5001** for the embedded scanners, and a **HTTPS** listener on port **5000** for the
-browser dashboard and its APIs. Each app only exposes its own routes, so a scanner route
-404s on the HTTPS port and vice-versa.
+The server runs **two listeners in one process, split by operation type**: an **HTTPS**
+listener on port **5000** for everything that *writes* (scanner scans/enrollments, and the
+edit page + its saves), and a plaintext **HTTP** listener on port **5001** for everything
+that *reads* (the live dashboard and its SSE stream). **Rationale: all writing is
+encrypted, all reading is unencrypted.** Each app exposes only its own routes, so a write
+route 404s on the read port and vice-versa. A bonus of the plaintext read side: any
+display — including a smart TV that can't install a cert — can show the dashboard.
 
 ## Table of Contents
 
@@ -74,41 +80,42 @@ Any always-on x86 machine running Windows or Linux. Tested on Windows 10/11. Rec
 ## Software Architecture
 
 ### Server side (`serverSystem.py`)
-- **Framework:** Flask 3.x — **two** `Flask` apps in one process (`scanner_app`, `dashboard_app`)
+- **Framework:** Flask 3.x — **two** `Flask` apps in one process, split by operation:
+  `write_app` and `read_app`
 - **WSGI server:** **gevent** (`gevent.pywsgi.WSGIServer`), monkey-patched for cooperative concurrency
-  - HTTP  listener on **:5001** → `scanner_app` (NFC scanners)
-  - HTTPS listener on **:5000** → `dashboard_app` (browser dashboard, static files, SSE)
+  - HTTPS listener on **:5000** → `write_app` (scans, enrollments, the edit page + its saves)
+  - HTTP  listener on **:5001** → `read_app` (dashboard, SSE stream, history)
 - **Database:** SQLite with WAL mode (`trackingFile.db`)
-- **Auth:** Shared API key in the `X-API-Key` header (see per-endpoint table below)
-- **Encryption:** Self-signed TLS certificate (`cert.pem`/`key.pem`) — HTTPS listener only
-- **Live updates:** Server-Sent Events (`/api/stream`) push the full cart state to every dashboard on each change
+- **Auth:** Shared API key in the `X-API-Key` header on the write routes (see per-endpoint table below)
+- **Encryption:** Self-signed TLS certificate (`cert.pem`/`key.pem`) — the HTTPS *write* listener only
+- **Live updates:** Server-Sent Events (`/api/stream`, on the read listener) push full cart state to every dashboard on each change — a write on `:5000` broadcasts to readers on `:5001` (shared in-process state)
 - **Resilience:** daily SQLite `.backup()` to `backups/` and a Windows keep-awake thread (both skipped when `testing = True`)
 
 ### Dashboard & editing
-- **`GET /`** — full-screen live board (`static/dashboard.html` + `app.js` + `styles.css`), grouped by location, with overdue/warning highlighting. Updates in real time over SSE.
-- **`GET /edit`** — a page for a computer stationed in Jurassic Park to edit each JP cart's **contents** and **use-by date**. Saves via `PATCH /api/carts/<id>`; edits broadcast instantly to the live board.
+- **`GET /` (HTTP :5001)** — full-screen live board (`static/dashboard.html` + `app.js` + `styles.css`), grouped by location, with overdue/warning highlighting. Updates in real time over SSE. Plaintext, so any display can load it with no cert.
+- **`GET /edit` (HTTPS :5000)** — a page for a computer stationed in Jurassic Park to edit each JP cart's **contents** and **use-by date**. Saves via `PATCH /api/carts/<id>` over HTTPS; edits broadcast instantly to the live board.
 
 ### Client side (`NFCSystem/`)
 - **MCU:** ESP32-WROOM-32
 - **Build system:** PlatformIO + Arduino framework
 - **NFC:** Adafruit PN532 library, I²C mode
-- **Networking:** WiFi station + plaintext **HTTP** via `WiFiClient` (scanners are on a trusted VLAN; no TLS on the scanner path)
+- **Networking:** WiFi station + **HTTPS** via `WiFiClientSecure`, with the server's self-signed cert **pinned** (`setCACert`). Requires an NTP time sync at boot so cert-date validation passes.
 - **Audio feedback:** PWM tones via KY-006 passive buzzer
 
 ### Communication flow
 
 1. User taps an NFC tag attached to a cart against a scanner
 2. ESP32 reads the tag's UID via the PN532
-3. ESP32 sends `POST /scan` with `{uid, location}` over HTTP to `:5001`
+3. ESP32 sends `POST /scan` with `{uid, location}` over **HTTPS** to `:5000` (cert pinned)
 4. Server looks up the cart by UID, updates `current_location`, appends to the `history` table
-5. Server responds with the cart name and outcome; the change is broadcast to dashboards via SSE
+5. Server responds with the cart name and outcome; the change is broadcast to dashboards (on `:5001`) via SSE
 6. ESP32 plays a tone pattern (success / unknown / error) via the buzzer
 
 ## Repository Layout
 
 ```
-serverSystem.py         Flask server: scanner (HTTP) + dashboard (HTTPS) listeners
-static/                 Browser assets served by dashboard_app
+serverSystem.py         Flask server: write (HTTPS :5000) + read (HTTP :5001) listeners
+static/                 Browser assets (edit page served by write_app, dashboard by read_app)
   dashboard.html          Live board markup
   app.js                  SSE client + rendering for the board
   styles.css              Board styling (kiosk-oriented)
@@ -117,7 +124,7 @@ static/                 Browser assets served by dashboard_app
   edit.css                Editor styling (interactive, not kiosk)
 enroll.py               One-off: associate NFC UIDs with cart records
 localClientTesting.py   Keyboard-driven fake scanner for local testing
-generate_cert.py        Generates self-signed cert.pem/key.pem for the HTTPS dashboard
+generate_cert.py        Generates self-signed cert.pem/key.pem for the HTTPS write listener (pinned by scanners)
 requirements.txt        Python dependencies (grouped by purpose)
 start_server.bat        Launch the server (Windows)
 start_dashboard.bat     Launch server + testing client + kiosk browser
@@ -146,19 +153,22 @@ The production server lives in `C:\NFC-Tracker` on the Windows host.
    NFC_API_KEY=your-shared-secret
    ```
    The server refuses to start if `NFC_API_KEY` is unset.
-3. **Generate the TLS certificate** for the HTTPS dashboard:
+3. **Generate the TLS certificate** for the HTTPS write listener:
    ```cmd
    python generate_cert.py
    ```
-   Edit the `HOSTNAMES` list first so the cert covers how browsers address the machine. This writes `cert.pem` and `key.pem`.
+   Edit the `HOSTNAMES` list first so the cert covers how scanners/editors address the
+   machine. This writes `cert.pem` and `key.pem`. The scanners **pin** this cert, so paste
+   `cert.pem` into each scanner's `config.h` (`SERVER_CERT`) and reflash whenever you
+   regenerate it.
 4. **Run the server:**
    ```cmd
    python serverSystem.py
    ```
    or double-click `start_server.bat`. On start it prints both listeners:
    ```
-   Scanners  (HTTP) : http://0.0.0.0:5001
-   Dashboard (HTTPS): https://0.0.0.0:5000
+   Writes (HTTPS): https://0.0.0.0:5000  (scans, enroll, edit)
+   Reads  (HTTP) : http://0.0.0.0:5001  (dashboard, stream, history)
    ```
 
 **Testing toggle:** `testing = True` at the top of `serverSystem.py` disables the
@@ -166,15 +176,15 @@ keep-awake and daily-backup background threads. Set it to `False` for real deplo
 
 **Kiosk launch:** `start_dashboard.bat` starts the server minimized, launches
 `localClientTesting.py` (a keyboard-driven fake scanner), then opens Chrome/Edge in kiosk
-mode at `https://localhost:5000/` with `--ignore-certificate-errors` (the cert is
-self-signed).
+mode at `http://localhost:5001/` — the read side is plaintext, so no cert flags are needed.
 
 ## Client (ESP32) Setup
 
 1. Install [PlatformIO](https://platformio.org/) (VS Code extension or CLI).
 2. Copy `Examples/config.example.h` to `NFCSystem/include/config.h` and fill in WiFi
-   credentials, `SERVER_URL` (`http://<host>:5001/scan`), and `API_KEY` (must match the
-   server's `NFC_API_KEY`).
+   credentials, `SERVER_URL` (`https://<host>:5000/scan` — use the cert's hostname, not an
+   IP), `API_KEY` (must match the server's `NFC_API_KEY`), and `SERVER_CERT` (paste the
+   server's `cert.pem` — the firmware pins it).
 3. Build and flash the environment for that station's location (`SCANNER_LOCATION` is set
    per-environment via `build_flags` in `platformio.ini`):
    ```cmd
@@ -200,8 +210,9 @@ Write down which UID belongs to which cart number.
 
 ### Step 2: Enroll
 
-Edit `enroll.py` (repo root) — set `SERVER` to `http://<host>:5001`, `API_KEY` to match the
-server, and fill in the `ENROLLMENTS` list:
+Edit `enroll.py` (repo root) — set `SERVER` to `https://<host>:5000` (enrollment is a
+write), ensure `NFC_API_KEY` is in your `.env`, and fill in the `ENROLLMENTS` list. Run it
+from the repo root so it can verify TLS against `cert.pem`:
 
 ```python
 ENROLLMENTS = [
@@ -227,9 +238,10 @@ After enrollment, the same tag tapped on a scanner produces a successful scan + 
 
 ## API Reference
 
-The server exposes two listeners. Routes are **not** shared between them.
+The server exposes two listeners. Routes are **not** shared: a write route 404s on the read
+port and a read route 404s on the write port.
 
-### Scanner listener — HTTP, port 5001
+### Write listener — HTTPS, port 5000
 
 #### `POST /scan`  *(requires `X-API-Key`)*
 Records a scan from a scanner station. On a move out of `MAL`, the cart's `contents` are
@@ -239,7 +251,7 @@ reset to `Empty` and `date_usage` to `Return`.
 ```json
 {"uid": "04A1B2C3D4E5F6", "location": "JIT"}
 ```
-**Responses:** `200` recorded · `400` bad input / unknown UID · `401` bad key
+**Responses:** `200` recorded · `400` bad input / unknown UID · `401` bad key · `429` rate-limited
 
 #### `POST /enroll`  *(requires `X-API-Key`)*
 Associates an NFC UID with a cart record.
@@ -250,19 +262,13 @@ Associates an NFC UID with a cart record.
 ```
 **Responses:** `200` ok · `400` missing fields · `404` no such cart · `409` UID already assigned
 
-#### `GET /health`  *(open)*
-Unauthenticated heartbeat: `{"status":"ok","time":"..."}`.
-
-### Dashboard listener — HTTPS, port 5000
-
-#### `GET /`  *(open)*
-The live dashboard HTML.
-
-#### `GET /edit`  *(open)*
-The Jurassic Park contents/date editor. (The page itself calls the API below with a key.)
+#### `GET /edit`  *(open — HTML)*
+The Jurassic Park contents/date editor. Served on the write listener (not the read one) so
+its same-origin API calls stay on HTTPS. The page sends the API key on the calls below.
 
 #### `GET /api/carts`  *(requires `X-API-Key`)*
-Returns all carts and their current state.
+Returns all carts and their current state. It's a read, but it lives here because the HTTPS
+edit page fetches it same-origin — an HTTP fetch from an HTTPS page is blocked as mixed content.
 ```json
 [
   {"id": 0, "nfc_uid": "04A1B2C3D4E5F6", "name": "Condor",
@@ -280,8 +286,17 @@ be edited; `date_usage` must be `MM-DD-YYYY`. Broadcasts the change to dashboard
 ```
 **Responses:** `200` saved · `400` bad body/date · `403` cart not in Jurassic Park · `404` no such cart
 
-#### `GET /api/history?limit=N`  *(requires `X-API-Key`)*
-Most recent N history entries (default 50, max 500), each joined to its cart name.
+#### `GET /health`  *(open)*
+Unauthenticated heartbeat: `{"status":"ok","time":"..."}`.
+
+### Read listener — HTTP, port 5001
+
+#### `GET /`  *(open)*
+The live dashboard HTML.
+
+#### `GET /api/history?limit=N`  *(open)*
+Most recent N history entries (default 50, max 500), each joined to its cart name. Open (no
+key) — it's a plaintext read exposing the same movement data the dashboard already shows.
 ```json
 [
   {"log_id": 142, "cart_id": 0, "cart_name": "Condor",
@@ -294,7 +309,7 @@ Server-Sent Events stream. Emits a `snapshot` event with full cart state on conn
 every change, plus periodic heartbeats.
 
 #### `GET /health`  *(open)*
-Same heartbeat as the scanner listener.
+Same heartbeat as the write listener.
 
 ## Configuration Reference
 
@@ -309,15 +324,15 @@ Same heartbeat as the scanner listener.
 | Constant | Default | Description |
 |---|---|---|
 | `DB_FILE` | `"trackingFile.db"` | SQLite filename |
-| `PORT` | `5000` | HTTPS port — dashboard listener |
-| `HTTP_PORT` | `5001` | HTTP port — scanner listener |
+| `WRITE_PORT` | `5000` | HTTPS port — write listener (scans, enroll, edit + PATCH) |
+| `READ_PORT` | `5001` | HTTP port — read listener (dashboard, SSE, history) |
 | `testing` | `True` | When `True`, skip keep-awake + backup threads |
 | `MAX_SSE_SUBS` | `50` | Max concurrent dashboard SSE connections; beyond this, `/api/stream` returns `503` (anti-DoS) |
 | `MAX_CONTENT_LENGTH` | `64 KB` | Request-body cap on both listeners; larger POSTs get `413` (anti-DoS) |
 | `Locale` enum | `InTransit`, `JurassicPark`, `JIT`, `MAL` | Valid location values. On startup any legacy `In Transit` rows are migrated to `MAL`. |
 
 **Rate limiting:** the API is rate-limited per client IP via `flask-limiter` (in-memory).
-Defaults: scanner listener 120/min, dashboard listener 300/min, with tighter caps on
+Defaults: write listener 120/min, read listener 300/min, with tighter caps on
 `POST /scan` (60/min), `POST /enroll` (20/min), and `PATCH /api/carts/<id>` (30/min).
 Exceeding a limit returns `429`. All values are tunable constants/decorators in
 `serverSystem.py`.
@@ -327,7 +342,8 @@ Exceeding a limit returns `429`. All values are tunable constants/decorators in
 | Constant | Description |
 |---|---|
 | `WIFI_SSID`, `WIFI_PASS` | WiFi credentials (`""` password for an open network) |
-| `SERVER_URL` | Full HTTP URL to the scanner endpoint, e.g. `http://<host>:5001/scan` |
+| `SERVER_URL` | Full HTTPS URL to the scan (write) endpoint, e.g. `https://<host>:5000/scan` |
+| `SERVER_CERT` | The server's `cert.pem` (PEM), pinned via `setCACert` |
 | `API_KEY` | Must match server's `NFC_API_KEY` |
 | `SDA_PIN`, `SCL_PIN` | I²C pins for PN532 (default 21, 22) |
 | `BUZZER_PIN` | GPIO for KY-006 signal pin (default 25) |
@@ -347,7 +363,9 @@ Exceeding a limit returns `429`. All values are tunable constants/decorators in
 |---|---|---|
 | Boot-fail siren forever | PN532 not responding | Check wiring (SDA→21, SCL→22, VCC→3V3, GND→GND); confirm DIP switches set to I²C (1=OFF, 2=ON) |
 | `WiFi Failed` repeatedly | Bad SSID/password | Edit `config.h`, rebuild, reflash |
-| `Server: -1` | Couldn't reach server | See "Network issues" below |
+| `Server: -1` | Couldn't reach server, or TLS handshake failed | See "Network issues" below; if WiFi is up, suspect TLS (see next row) |
+| `Server: -1` right after "Syncing time for TLS" fails | Clock never synced → cert-date validation fails | Ensure NTP (UDP 123) egress is allowed; the boot log should show time sync "done" before scans work |
+| TLS/cert errors in serial | `SERVER_CERT` doesn't match the server's current `cert.pem` | Re-paste `cert.pem` into `config.h` and reflash (pinning = reflash on cert change) |
 | `Server: 401` | Auth rejected | API key in `config.h` doesn't match `.env` |
 | `Server: 400 Unknown Tag UID` | Tag not enrolled yet | Run `enroll.py` for that UID |
 | ESP32 reboots when WiFi connects | Power supply too weak | Use a real wall charger, not a PC USB port |
@@ -360,27 +378,29 @@ Exceeding a limit returns `429`. All values are tunable constants/decorators in
 | `[AUTH] Rejected request from <ip>` | Client API key mismatch | Match the keys exactly |
 | `Address already in use` on startup | Previous instance still running | `netstat -ano \| findstr :5000` (or `:5001`) then `taskkill /F /PID <pid>` |
 | `[BACKUP ERROR]` | Disk full or permission denied | Check `backups/` folder writability |
-| `/health` 404s | Wrong port or case | Scanner endpoints are on 5001, dashboard on 5000; paths are case-sensitive |
+| `/health` 404s | Wrong port or case | Write routes are on 5000 (HTTPS), read routes on 5001 (HTTP); paths are case-sensitive |
 
 ### Network issues
 
 If the ESP32 can't reach the server (`Server: -1` repeatedly), test reachability layer by layer:
 
 1. **Server running?** The console should print both listeners on startup.
-2. **Reachable locally?** On the server PC, `http://localhost:5001/health` (scanner) and `https://localhost:5000/health` (dashboard) should both respond.
-3. **Reachable from another device?** From a phone on the same network: `http://<server-host>:5001/health`. If this fails, a firewall is blocking inbound connections.
-4. **DNS working?** `ping <server-host>` should resolve. If not, use mDNS or a DHCP reservation.
+2. **Reachable locally?** On the server PC, `https://localhost:5000/health` (write) and `http://localhost:5001/health` (read) should both respond.
+3. **Reachable from another device?** From a phone on the same network: `http://<server-host>:5001/health` (the plaintext read side is easiest to test). If this fails, a firewall is blocking inbound connections.
+4. **DNS working?** `ping <server-host>` should resolve. If not, use mDNS or a DHCP reservation. Scanners must reach the server by the **cert's hostname** (not an IP), or pinning fails.
 
-The scanner path is plain HTTP, so no certificate is involved — check the URL, port
-(5001), and firewall. The self-signed cert only affects the HTTPS dashboard on 5000.
+The scanner (write) path is HTTPS with a **pinned** cert — if scans fail while WiFi is up,
+suspect the cert or the boot-time clock sync, not just the network. The dashboard (read)
+path is plain HTTP on 5001, so no certificate is involved there.
 
 ### Common dev mistakes
 
 - Editing `config.h` but forgetting to reflash the ESP32 — `pio run -e <env> -t upload` again
 - Editing `.env` but forgetting to restart the server
 - Updating the API key on one side but not the other
-- Pointing a scanner at `:5000` (HTTPS dashboard) instead of `:5001` (HTTP scanner)
-- Server's hostname changed (Windows machine renamed) — regenerate the dashboard cert
+- Pointing a display at `:5000` (HTTPS write) instead of `:5001` (HTTP read), or a scanner at the read port
+- Regenerating `cert.pem` but forgetting to re-paste it into every scanner's `config.h` and reflash (pinning)
+- Server's hostname changed (Windows machine renamed) — regenerate the cert *and* reflash scanners
 
 ## Project Decisions
 
@@ -392,14 +412,19 @@ For a few scanners and tens of scans per day, SQLite is simpler, faster to set u
 ### Why gevent instead of Waitress/Hypercorn?
 The server needs to run two listeners in one process and hold many long-lived SSE
 connections open without a thread per client. gevent's monkey-patched cooperative
-concurrency handles both cheaply, serves TLS in-process for the dashboard, and runs fine on
-Windows. (An earlier design used Hypercorn; gevent replaced it once SSE was added.)
+concurrency handles both cheaply, serves TLS in-process for the write listener, and runs
+fine on Windows. (An earlier design used Hypercorn; gevent replaced it once SSE was added.)
 
-### Why split HTTP scanners from the HTTPS dashboard?
-The scanners are embedded devices on a trusted internal VLAN; terminating TLS on an ESP32
-adds cost and complexity for little benefit there. Browsers, by contrast, get real HTTPS.
-Running two Flask apps on two ports means each listener exposes only its own routes — a
-scanner endpoint simply doesn't exist on the browser port, and vice-versa.
+### Why split by write (HTTPS) vs read (HTTP)?
+The guiding principle is **all writing is encrypted, all reading is unencrypted.** Anything
+that mutates the database — scanner scans, enrollments, JP edits — carries the API key and
+changes state, so it goes over TLS. The dashboard is a passive, read-only view of
+low-sensitivity data, so it runs plaintext. Two payoffs: the key never crosses the wire in
+cleartext, and *any* display (including a smart TV that can't install a cert) can show the
+board over plain HTTP. Two Flask apps on two ports means each listener exposes only its own
+routes — a write endpoint simply doesn't exist on the read port, and vice-versa. The one
+wrinkle: `GET /api/carts` is a read that lives on the HTTPS side, because the HTTPS edit
+page must fetch it same-origin (an HTTP fetch from an HTTPS page is blocked as mixed content).
 
 ### Why ESP32 + PN532 instead of an all-in-one NFC reader?
 The ESP32 is dirt cheap (~$10), has WiFi built in, and is well-supported. The PN532 reads ISO14443A tags reliably. Dedicated all-in-one NFC readers exist but cost 5–10× more.
@@ -409,12 +434,15 @@ For an internal cart-tracking system on a trusted network, a shared secret is su
 mTLS adds significant complexity (per-client certs, rotation, revocation). OAuth is overkill
 — there are no user accounts, just trusted devices.
 
-### Why plaintext HTTP for the scanners?
-The data (cart locations) isn't catastrophic if seen, and the scanners sit on a trusted
-internal network. Dropping TLS on the scanner path removed the need to embed and rotate a
-cert on every ESP32. *(Historical note: scanners previously used HTTPS with
-`setInsecure()`; that path was removed when scanners moved to the HTTP listener.)* If the
-scanner network becomes untrusted, put TLS back or tunnel it.
+### Why cert pinning on the scanners (not `setInsecure`)?
+Scanners write, so they must use HTTPS — and to make that HTTPS actually mean something, the
+firmware **pins** the server's self-signed cert with `setCACert(SERVER_CERT)`, giving real
+MITM protection rather than encryption-without-authentication. The cost is operational:
+pinning validates the cert's dates, so each ESP32 must NTP-sync its clock at boot, and
+regenerating the cert means re-pasting it into every `config.h` and reflashing.
+*(History: scanners have been plaintext HTTP, and HTTPS-with-`setInsecure()`, at different
+points; pinning is the current choice.)* If reflashing on cert rotation becomes painful,
+`setInsecure()` (encrypt-only) is the fallback.
 
 ### Why I²C for PN532 instead of SPI?
 Fewer wires (4 vs 7), same throughput at this scale, simpler library setup. SPI is faster but unnecessary for one tag-read every few seconds.

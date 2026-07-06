@@ -8,13 +8,24 @@
 constexpr const char* WIFI_SSID = "your-ssid";
 constexpr const char* WIFI_PASS = "your-password";   // "" for an open network
 
-// Scanner endpoint (plaintext HTTP on the scanner port, 5001).
-// The ESP32 talks to the scanner listener over HTTP via WiFiClient - no TLS.
-// Use the server's hostname or IP; the scanner port is 5001 (dashboard is 5000/HTTPS).
-constexpr const char* SERVER_URL = "http://[SERVER NAME]:5001/scan";
+// Scanner endpoint (HTTPS on the WRITE port, 5000).
+// Scans are writes, so they go to the encrypted write listener via WiFiClientSecure.
+// Use the hostname the cert was issued for (see SERVER_CERT below) - not an IP,
+// since the self-signed cert is valid for hostnames only. (The dashboard/reads
+// live separately on the plaintext HTTP read port 5001.)
+constexpr const char* SERVER_URL = "https://[SERVER NAME]:5000/scan";
 
 // Must match NFC_API_KEY in the server's .env (see serverSystem.py)
 constexpr const char* API_KEY = "your-key-here";
+
+// Server's self-signed cert (cert.pem), pinned by the firmware via setCACert().
+// Paste the full PEM here. Because the cert is pinned, regenerating it on the
+// server (hostname change, or the ~10-year expiry) means reflashing the scanners.
+constexpr const char* SERVER_CERT = R"EOF(
+-----BEGIN CERTIFICATE-----
+                  <---- paste the contents of the server's cert.pem here
+-----END CERTIFICATE-----
+)EOF";
 
 // NOTE: SCANNER_LOCATION is NOT set here. It is injected at build time by
 // PlatformIO build_flags, one per environment (see NFCSystem/platformio.ini):
