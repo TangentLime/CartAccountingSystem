@@ -1,6 +1,11 @@
-flask>=3.0
-hypercorn>=0.16
-cryptography>=42.0
+# --- Server runtime (serverSystem.py) ---
+gevent>=24.0
+Flask>=3.0
 python-dotenv>=1.0
-zeroconf>=0.131
+
+# --- Certificate generation (generate_cert.py) ---
+cryptography>=42.0
+
+# --- Helper / testing scripts (enroll.py, localClientTesting.py) ---
 requests>=2.31
+pynput>=1.7
