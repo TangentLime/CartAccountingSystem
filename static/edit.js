@@ -122,14 +122,26 @@ function setRowMsg(cartId, cls, text) {
 async function saveCart(cartId) {
   const contents = document.getElementById(`contents-${cartId}`).value.trim();
   const pickerVal = document.getElementById(`date-${cartId}`).value;
-  const dateUsage = pickerToDb(pickerVal);
-
+  const dateUsage = pickerToDb(pickerVal);   // MM-DD-YYYY string for the API
+  
   if (!contents) {
-    setRowMsg(cartId, 'error', 'Contents required');
+    setRowMsg(cartId, 'error', 'Please specify the contents');
     return;
   }
   if (!dateUsage) {
-    setRowMsg(cartId, 'error', 'Pick a date');
+    setRowMsg(cartId, 'error', 'Please select a date');
+    return;
+  }
+
+  // Reject past dates. dateUsage stays a STRING for the API, so parse a separate
+  // local-midnight Date to compare. Use getTime() (full date), not getDate()
+  // (day-of-month only, which mis-compares across months).
+  const [yyyy, mm, dd] = pickerVal.split('-').map(Number);
+  const chosen = new Date(yyyy, mm - 1, dd);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  if (chosen.getTime() < today.getTime()) {
+    setRowMsg(cartId, 'error', 'The carts cannot time-travel');
     return;
   }
 

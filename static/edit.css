@@ -132,6 +132,7 @@ button:active { transform: translatey(1px); }
 .field input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.8); }
 
 .row-msg {
+  grid-column: 1 / -1;      /* own full-width row: never widen a column / shove inputs */
   font-size: 0.8rem;
   font-weight: 600;
   min-height: 1rem;

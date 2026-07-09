@@ -261,13 +261,41 @@ h1 {
 .cart-card.warning .cart-date     { color: #ffd54f; font-weight: 700; }
 
 
-/* ========== Just-moved ========== */
-.cart-card.just-moved {
-  animation: flash-green 1.5s ease-out;
+/* ========== Move animation (FLIP ghost travel) ========== */
+/* The ghost is a clone pinned to <body> so it glides ABOVE the overflow:hidden
+   columns, from a card's old cell to its new one. The transition itself is set
+   inline in app.js (per-ghost), so the delta is known before it plays. */
+.card-ghost {
+  position: fixed;
+  z-index: 1000;
+  margin: 0;
+  pointer-events: none;
+  will-change: transform;
 }
-@keyframes flash-green {
-  0%   { background: rgba(76, 175, 80, 0.6); transform: scale(1.04); }
+/* Real destination card stays invisible until its ghost lands. */
+.cart-card.card-arriving { opacity: 0; }
+/* Brief green "settle" flash when the card reveals at its new home. */
+.cart-card.card-settle { animation: settle-green 0.7s ease-out; }
+@keyframes settle-green {
+  0%   { background: rgba(76, 175, 80, 0.6); transform: scale(1.05); }
   100% { transform: scale(1); }
+}
+
+/* New card fading + scaling in (keyframe, so it never clashes with inline FLIP). */
+.cart-card.card-enter { animation: card-enter-anim 0.4s ease-out; }
+@keyframes card-enter-anim {
+  0%   { opacity: 0; transform: scale(0.9); }
+  100% { opacity: 1; transform: scale(1); }
+}
+
+/* Smoothly tween text colour when a card crosses a warning/overdue threshold. */
+.cart-id, .cart-contents, .cart-date { transition: color 0.35s ease; }
+
+/* Crossfade a field whose text changed (e.g. an edit to contents / use-by date). */
+.content-changed { animation: content-fade 0.5s ease-out; }
+@keyframes content-fade {
+  0%   { opacity: 0.15; }
+  100% { opacity: 1; }
 }
 
 /* Empty zone */
