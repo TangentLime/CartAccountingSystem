@@ -16,7 +16,7 @@ import hmac
 from typing import Final
 from enum import Enum
 from functools import wraps
-from flask import Flask, request, jsonify, send_from_directory, Response
+from flask import Flask, request, jsonify, send_from_directory, Response, session, redirect
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from dotenv import load_dotenv
@@ -81,6 +81,29 @@ if not API_KEY:
     print("ERROR: NFC_API_KEY not set. Please check .env file.")
     sys.exit(1)
 
+# Shared password for the human-facing /edit login, and the key Flask uses to SIGN
+# the session cookie (so a logged-in cookie can't be forged). Both live in .env like
+# NFC_API_KEY. The password is compared with hmac.compare_digest, same as the API key.
+EDIT_PASSWORD: Final = os.environ.get('EDIT_PASSWORD')
+SECRET_KEY: Final = os.environ.get('SECRET_KEY')
+
+if not EDIT_PASSWORD:
+    print("ERROR: EDIT_PASSWORD not set. Please check .env file.")
+    sys.exit(1)
+if not SECRET_KEY:
+    print("ERROR: SECRET_KEY not set. Please check .env file.")
+    sys.exit(1)
+
+# Only the HTTPS write app has logged-in sessions (the edit UI lives there). Secure
+# cookie flags are safe because that listener is TLS; the HTTP read app has no session.
+write_app.secret_key = SECRET_KEY
+write_app.config.update(
+    SESSION_COOKIE_SECURE=True,      # cookie only sent over HTTPS
+    SESSION_COOKIE_HTTPONLY=True,    # JS can't read the cookie
+    SESSION_COOKIE_SAMESITE='Lax',   # not sent on cross-site POSTs -> CSRF mitigation
+    PERMANENT_SESSION_LIFETIME=datetime.timedelta(hours=10),
+)
+
 
 # ============================================================
 #  Decorators & middleware
@@ -103,6 +126,38 @@ def require_api_key(f):
                 'message': 'Invalid API key'
             }), 401
         return f(*args, **kwargs)
+    return decorated
+
+
+def _has_valid_api_key():
+    """True if the request carries a correct X-API-Key (constant-time compare)."""
+    provided = request.headers.get('X-API-Key')
+    return bool(provided) and hmac.compare_digest(provided, API_KEY)
+
+
+def require_login(f):
+    """Gate an HTML page behind the /login session. Redirects to the login form
+    (not a JSON 401) so a browser lands somewhere useful when logged out."""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if not session.get('authed'):
+            return redirect('/login')
+        return f(*args, **kwargs)
+    return decorated
+
+
+def require_auth(f):
+    """Gate an API route behind EITHER a logged-in session (browser edit page) OR a
+    valid X-API-Key (machine/script callers). Returns the same 401 JSON as
+    require_api_key when neither is present."""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if session.get('authed') or _has_valid_api_key():
+            return f(*args, **kwargs)
+        return jsonify({
+            'status': 'error',
+            'message': 'Authentication required'
+        }), 401
     return decorated
 
 
@@ -338,10 +393,41 @@ def enrollTag():
 
 
 # ============================================================
+#  Write routes (HTTPS) - login / logout
+# ============================================================
+
+@write_app.route('/login', methods=['GET'])
+def login_page():
+    # Already logged in? Skip the form and go straight to the editor.
+    if session.get('authed'):
+        return redirect('/edit')
+    return send_from_directory('static', 'login.html')
+
+
+@write_app.route('/login', methods=['POST'])
+@write_limiter.limit("10 per minute")   # throttle password guessing
+def login_submit():
+    provided = request.form.get('password', '')
+    if hmac.compare_digest(provided, EDIT_PASSWORD):
+        session['authed'] = True
+        session.permanent = True        # apply PERMANENT_SESSION_LIFETIME (10h)
+        return redirect('/edit')
+    print(f"  [AUTH] Failed /login from {request.remote_addr}")
+    return redirect('/login?error=1')
+
+
+@write_app.route('/logout', methods=['POST'])
+def logout():
+    session.clear()
+    return redirect('/login')
+
+
+# ============================================================
 #  Write routes (HTTPS) - the edit page and its saves
 # ============================================================
 
 @write_app.route('/edit')
+@require_login
 def edit_page():
     return send_from_directory('static', 'edit.html')
 
@@ -349,7 +435,7 @@ def edit_page():
 # page (served over HTTPS) fetches it same-origin. Serving it from the HTTP read
 # app would make the HTTPS page issue an HTTP request -> blocked as mixed content.
 @write_app.route('/api/carts', methods=['GET'])
-@require_api_key
+@require_auth
 def apiCarts():
     conn = sqlite3.connect(DB_FILE)
     conn.row_factory = sqlite3.Row
@@ -365,7 +451,7 @@ def apiCarts():
 
 @write_app.route('/api/carts/<int:cart_id>', methods=['PATCH'])
 @write_limiter.limit("30 per minute")
-@require_api_key
+@require_auth
 def updateCart(cart_id):
     """Edit a JP cart's contents and use-by date from the /edit page."""
     data = request.get_json(silent=True)

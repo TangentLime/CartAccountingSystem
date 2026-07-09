@@ -5,7 +5,6 @@
 // ============================================================
 
 const TARGET_LOCATION = 'Jurassic Park';
-const KEY_STORAGE = 'nfc_api_key';
 
 // The JP cart-ids currently rendered. null until the first load completes, so the
 // SSE handler won't compare a live snapshot against an empty/absent baseline.
@@ -42,24 +41,6 @@ function pickerToDb(s) {
   if (parts.length !== 3) return '';
   const [yyyy, mm, dd] = parts;
   return `${mm}-${dd}-${yyyy}`;
-}
-
-// ---------- API key handling ----------
-
-function getApiKey(forcePrompt) {
-  let key = localStorage.getItem(KEY_STORAGE);
-  if (!key || forcePrompt) {
-    key = window.prompt('Enter the server API key:', key || '');
-    if (key) {
-      localStorage.setItem(KEY_STORAGE, key.trim());
-      key = key.trim();
-    }
-  }
-  return key;
-}
-
-function clearApiKey() {
-  localStorage.removeItem(KEY_STORAGE);
 }
 
 // ---------- rendering ----------
@@ -101,19 +82,14 @@ function renderRows(carts) {
 // ---------- load ----------
 
 async function loadCarts() {
-  const key = getApiKey(false);
-  if (!key) {
-    setStatus('error', 'API key required');
-    return;
-  }
   setStatus('connecting', 'Loading…');
   try {
-    const resp = await fetch('/api/carts', { headers: { 'X-API-Key': key } });
+    // The session cookie is sent automatically (same-origin); no header needed.
+    const resp = await fetch('/api/carts');
     if (resp.status === 401) {
-      clearApiKey();
-      setStatus('error', 'Invalid API key');
-      getApiKey(true);
-      return loadCarts();
+      // Session expired or logged out -> send the operator back to the login form.
+      location.href = '/login';
+      return;
     }
     if (!resp.ok) {
       setStatus('error', `Load failed (${resp.status})`);
@@ -144,12 +120,6 @@ function setRowMsg(cartId, cls, text) {
 }
 
 async function saveCart(cartId) {
-  const key = getApiKey(false);
-  if (!key) {
-    setRowMsg(cartId, 'error', 'No API key');
-    return;
-  }
-
   const contents = document.getElementById(`contents-${cartId}`).value.trim();
   const pickerVal = document.getElementById(`date-${cartId}`).value;
   const dateUsage = pickerToDb(pickerVal);
@@ -167,17 +137,13 @@ async function saveCart(cartId) {
   try {
     const resp = await fetch(`/api/carts/${cartId}`, {
       method: 'PATCH',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-API-Key': key
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ contents, date_usage: dateUsage })
     });
 
     if (resp.status === 401) {
-      clearApiKey();
-      setRowMsg(cartId, 'error', 'Invalid API key');
-      getApiKey(true);
+      // Session expired mid-edit -> back to login.
+      location.href = '/login';
       return;
     }
 
@@ -240,10 +206,6 @@ function watchForChanges() {
 // ---------- wire up ----------
 
 document.getElementById('reload-btn').addEventListener('click', loadCarts);
-document.getElementById('key-btn').addEventListener('click', () => {
-  getApiKey(true);
-  loadCarts();
-});
 document.getElementById('stale-reload').addEventListener('click', loadCarts);
 
 loadCarts();

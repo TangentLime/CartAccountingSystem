@@ -15,7 +15,10 @@
             <div class="status">
                 <span id="status" class="connecting">Loading…</span>
                 <button id="reload-btn" type="button">Reload</button>
-                <button id="key-btn" type="button" title="Change the stored API key">API Key</button>
+                <!-- POST (not a link) so it can't be triggered cross-site as a GET -->
+                <form action="/logout" method="post">
+                    <button type="submit" title="Log out of the edit session">Log out</button>
+                </form>
             </div>
         </header>
 

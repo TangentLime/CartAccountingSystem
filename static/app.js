@@ -59,6 +59,7 @@ function isWarning(cart)
   const useBy = parseUseDate(cart.date_usage);
   if (!useBy) return false;
   const today = new Date();
+  useBy.setHours(0, 0, 0, 0);
   today.setHours(0, 0, 0, 0);
   const leadDate = new Date(useBy);
   leadDate.setDate(leadDate.getDate() - 3);
@@ -67,10 +68,10 @@ function isWarning(cart)
     return today > useBy;
   }
   else if (cart.current_location === 'JIT') {
-    return today == useBy;
+    return today.getTime() === useBy.getTime();
   }
   else if (cart.current_location === 'Jurassic Park') {
-    return today == leadDate;
+    return today.getTime() === leadDate.getTime();
   }
 }
 
