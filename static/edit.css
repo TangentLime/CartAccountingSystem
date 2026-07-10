@@ -70,6 +70,16 @@ button {
 button:hover  { background: #2f4160; border-color: #4a5f82; }
 button:active { transform: translatey(1px); }
 
+/* Disabled buttons are inert; a disabled Save turns neutral grey (not faded green). */
+button:disabled { cursor: not-allowed; }
+button:disabled:active { transform: none; }
+.save-btn:disabled,
+.save-btn:disabled:hover {
+  background: #2a3540;
+  border-color: #3a4a63;
+  color: #8593a3;
+}
+
 /* ========== Cart rows ========== */
 #cart-list {
   display: flex;
@@ -99,11 +109,11 @@ button:active { transform: translatey(1px); }
 .cart-meta {
   display: flex;
   flex-direction: column;
-  gap: 0.15rem;
-  min-width: 3.5rem;
+  justify-content: center;
+  min-width: 3rem;
 }
-.cart-meta .cart-id   { font-size: 0.75rem; font-weight: 800; color: #8aa5c2; }
-.cart-meta .cart-name { font-size: 1rem;    font-weight: 700; color: #ffffff; }
+/* Name removed; the ID now fills this cell and is sized for readability. */
+.cart-meta .cart-id { font-size: 1.25rem; font-weight: 800; color: #ffffff; white-space: nowrap; }
 
 .field { display: flex; flex-direction: column; gap: 0.25rem; }
 .field label {
@@ -128,6 +138,8 @@ button:active { transform: translatey(1px); }
   border-color: #6a8fc2;
   box-shadow: 0 0 0 2px rgba(106, 143, 194, 0.25);
 }
+/* Greyed "Empty" hint sits in the background until the operator types. */
+.field input::placeholder { color: #5f7183; opacity: 1; }
 /* Make the native date picker indicator visible on the dark theme */
 .field input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.8); }
 

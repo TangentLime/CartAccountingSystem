@@ -46,23 +46,32 @@ function pickerToDb(s) {
 // ---------- rendering ----------
 
 function rowHtml(cart) {
+  // Stash the loaded values as data-base so Save can stay disabled until an
+  // input actually differs from what was last loaded/refreshed.
+  // An "Empty" (or blank) cart is shown as a real placeholder: the field value is
+  // empty, so the greyed "Empty" hint sits in the background with the cursor at the
+  // start and vanishes natively on the first keystroke.
+  const raw = cart.contents ?? '';
+  const isEmpty = raw === '' || raw === 'Empty';
+  const contents = isEmpty ? '' : escapeHtml(raw);
+  const placeholder = isEmpty ? 'Empty' : '';
+  const pickerDate = dbToPicker(cart.date_usage);
   return `
     <div class="cart-row" data-cart-id="${cart.id}">
       <div class="cart-meta">
         <span class="cart-id">ID ${cart.id}</span>
-        <span class="cart-name">${escapeHtml(cart.name)}</span>
       </div>
       <div class="field">
         <label for="contents-${cart.id}">Contents</label>
         <input type="text" id="contents-${cart.id}" class="contents-input"
-               value="${escapeHtml(cart.contents)}">
+               value="${contents}" data-base="${contents}" placeholder="${placeholder}">
       </div>
       <div class="field">
         <label for="date-${cart.id}">Use-by date</label>
         <input type="date" id="date-${cart.id}" class="date-input"
-               value="${dbToPicker(cart.date_usage)}">
+               value="${pickerDate}" data-base="${pickerDate}">
       </div>
-      <button type="button" class="save-btn" data-save="${cart.id}">Save</button>
+      <button type="button" class="save-btn" data-save="${cart.id}" disabled>Save</button>
       <span class="row-msg" data-msg="${cart.id}"></span>
     </div>`;
 }
@@ -74,9 +83,33 @@ function renderRows(carts) {
     return;
   }
   list.innerHTML = carts.map(rowHtml).join('');
-  list.querySelectorAll('[data-save]').forEach(btn => {
-    btn.addEventListener('click', () => saveCart(Number(btn.dataset.save)));
+
+  list.querySelectorAll('.cart-row').forEach(row => {
+    const cartId = Number(row.dataset.cartId);
+    const contentsInput = row.querySelector('.contents-input');
+    const dateInput = row.querySelector('.date-input');
+    const saveBtn = row.querySelector('[data-save]');
+
+    // Enable Save only while something differs from the loaded baseline.
+    const refresh = () => updateSaveState(row);
+    contentsInput.addEventListener('input', refresh);
+    dateInput.addEventListener('input', refresh);
+    dateInput.addEventListener('change', refresh);   // date picker also fires 'change'
+
+    saveBtn.addEventListener('click', () => saveCart(cartId));
   });
+}
+
+// Disable a row's Save button unless its contents or date differ from the values
+// captured when the row was rendered (data-base).
+function updateSaveState(row) {
+  const contentsInput = row.querySelector('.contents-input');
+  const dateInput = row.querySelector('.date-input');
+  const saveBtn = row.querySelector('[data-save]');
+  const dirty =
+    contentsInput.value !== contentsInput.dataset.base ||
+    dateInput.value !== dateInput.dataset.base;
+  saveBtn.disabled = !dirty;
 }
 
 // ---------- load ----------
@@ -162,6 +195,16 @@ async function saveCart(cartId) {
     const data = await resp.json().catch(() => ({}));
     if (resp.ok) {
       setRowMsg(cartId, 'ok', '✓ Saved');
+      // The just-saved values are the new baseline -> re-disable Save until the
+      // operator edits again (the SSE 'reload' then refreshes the whole page).
+      const row = document.querySelector(`.cart-row[data-cart-id="${cartId}"]`);
+      if (row) {
+        const ci = row.querySelector('.contents-input');
+        const di = row.querySelector('.date-input');
+        ci.dataset.base = ci.value;
+        di.dataset.base = di.value;
+        updateSaveState(row);
+      }
     } else {
       setRowMsg(cartId, 'error', data.message || `Error ${resp.status}`);
     }
