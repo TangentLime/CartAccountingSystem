@@ -13,3 +13,4 @@ key.pem
 cert.pem
 __pycache__/
 .claude/
+tap.py

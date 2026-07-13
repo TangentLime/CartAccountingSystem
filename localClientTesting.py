@@ -12,7 +12,7 @@ if not API_KEY:
 
 # A scan is a write -> HTTPS write port (5000). The cert covers "localhost"
 # (see generate_cert.py HOSTNAMES), so verify against cert.pem from the repo root.
-SERVER_URL = f'https://localhost:5000/scan'
+SERVER_URL = f'https://GNELTS00014685:5000/scan'
 CERT = "cert.pem"
 
 

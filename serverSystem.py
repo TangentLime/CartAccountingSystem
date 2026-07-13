@@ -13,6 +13,8 @@ import sys
 import queue
 import json
 import hmac
+import ssl
+import re
 from typing import Final
 from enum import Enum
 from functools import wraps
@@ -106,6 +108,44 @@ write_app.config.update(
 
 
 # ============================================================
+#  Logging
+# ============================================================
+
+def slog(tag, msg):
+    """Uniform one-line server log: [HH:MM:SS] TAG       message."""
+    ts = datetime.datetime.now().strftime('%H:%M:%S')
+    print(f"[{ts}] {tag:9s} {msg}")
+
+
+# gevent's pywsgi writes malformed-request errors to its error_log as a big binary-ish
+# dump - most commonly a TLS ClientHello sent to a plaintext port, which it tries to
+# parse as an HTTP request line. Collapse those to one tidy line; pass real errors on.
+_PEER_RE = re.compile(r"\('([0-9a-fA-F:.]+)',\s*\d+\)")
+_ERRLOG_NOISE = ('Invalid HTTP method', 'Expected GET method', 'Invalid HTTP request line')
+
+class _FilteredErrorLog:
+    def write(self, data):
+        if not data or not data.strip():
+            return
+        if any(n in data for n in _ERRLOG_NOISE):
+            m = _PEER_RE.search(data)
+            slog('HTTP', f'ignored non-HTTP bytes from {m.group(1) if m else "?"} '
+                         f'(TLS or garbage on a plaintext port?)')
+            return
+        sys.stderr.write(data)
+    def writelines(self, lines):
+        for ln in lines:
+            self.write(ln)
+    def flush(self):
+        try:
+            sys.stderr.flush()
+        except Exception:
+            pass
+
+_error_log = _FilteredErrorLog()
+
+
+# ============================================================
 #  Decorators & middleware
 # ============================================================
 
@@ -120,7 +160,7 @@ def require_api_key(f):
                 'message': 'Missing X-API-Key header'
             }), 401
         if not hmac.compare_digest(provided, API_KEY):
-            print(f"  [AUTH] Rejected request from {request.remote_addr} - bad API key")
+            slog('AUTH', f'rejected {request.remote_addr} - bad API key')
             return jsonify({
                 'status': 'error',
                 'message': 'Invalid API key'
@@ -161,26 +201,29 @@ def require_auth(f):
     return decorated
 
 
+# Paths whose per-request line would just be noise (long-lived stream, health pings,
+# and static assets the browser fetches constantly).
+_LOG_SKIP = {'/api/stream', '/health', '/favicon.ico'}
+
 def log_request(response):
-    # Skip the SSE stream (it's long-lived and has no normal body)
-    if request.path == '/api/stream':
+    path = request.path
+    if path in _LOG_SKIP or path.startswith('/static/'):
         return response
 
+    # On errors only, append the short 'message' field (never the whole body).
+    extra = ""
+    if response.status_code >= 400:
+        try:
+            if response.content_type and 'application/json' in response.content_type:
+                msg = (json.loads(response.get_data(as_text=True)) or {}).get('message')
+                if msg:
+                    extra = f"  - {msg}"
+        except Exception:
+            pass
+
     ts = datetime.datetime.now().strftime('%H:%M:%S')
-
-    # Try to extract the response body as text
-    body_text = ""
-    try:
-        # Only log JSON responses (skip HTML pages, static files, etc.)
-        if response.content_type and 'application/json' in response.content_type:
-            raw = response.get_data(as_text=True)
-            body_text = f"  {raw}"
-    except Exception:
-        body_text = ""
-
     print(f"[{ts}] {request.remote_addr:15s} "
-          f"{request.method:4s} {request.path:25s} -> {response.status_code}{body_text}")
-
+          f"{request.method:4s} {path:25s} -> {response.status_code}{extra}")
     return response
 
 # Same logger runs on both listeners
@@ -224,7 +267,7 @@ def init_database():
     # Initialize the 9 carts
     cursor.execute("SELECT COUNT(*) FROM carts")
     if cursor.fetchone()[0] == 0:
-        print("Initializing the 9 carts...")
+        slog('DB', 'initializing 9 carts')
         imagCarts = [
             (0, '0', 'Condor', 'Alpha', datetime.date(2026, 6, 5).strftime("%m-%d-%Y"), Locale.InTransit.toString()),
             (1, '1', 'Albatross', 'Beta', datetime.date(2026, 6, 6).strftime("%m-%d-%Y"), Locale.InTransit.toString()),
@@ -244,14 +287,14 @@ def init_database():
     cursor.execute("UPDATE history SET old_location     = 'MAL' WHERE old_location     = 'In Transit'")
     cursor.execute("UPDATE history SET new_location     = 'MAL' WHERE new_location     = 'In Transit'")
     if cursor.rowcount > 0:
-        print(f"Migrated old 'In Transit' entries to 'MAL'.")
+        slog('DB', "migrated 'In Transit' -> 'MAL'")
 
     # Emergency-edit support (issue #7): a per-cart marker flag + an append-only audit
     # log. SQLite lacks ADD COLUMN IF NOT EXISTS, so guard on the current column list.
     existing_cols = [r[1] for r in cursor.execute("PRAGMA table_info(carts)").fetchall()]
     if 'emergency_flag' not in existing_cols:
         cursor.execute("ALTER TABLE carts ADD COLUMN emergency_flag INTEGER NOT NULL DEFAULT 0")
-        print("Added carts.emergency_flag column.")
+        slog('DB', 'added carts.emergency_flag column')
 
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS emergency_log (
@@ -320,19 +363,19 @@ def broadcastReload():
 def processScan():
     data = request.json
     if not data:
-        print('no body')
+        slog('SCAN', f'rejected (no body) from {request.remote_addr}')
         return jsonify({'status': 'error', 'message': 'No JSON body'}), 400
 
     nfcUid = data.get('uid')
     clientLocation = data.get('location') # In String form
 
     if nfcUid is None or clientLocation is None:
-        print('missing uid or location')
+        slog('SCAN', f'rejected (missing uid/location) from {request.remote_addr}')
         return jsonify({'status': 'error', 'message': 'Missing UID or location'}), 400
 
     validLocations = [loc.toString() for loc in Locale]
     if clientLocation not in validLocations:
-        print('Invalid location')
+        slog('SCAN', f'rejected (invalid location) from {request.remote_addr}')
         return jsonify({'status': 'error', 'message': f'Invalid location. Must be on of: {validLocations}'}), 400
 
     nfcUid = nfcUid.upper()
@@ -344,7 +387,7 @@ def processScan():
     cartData = cursor.fetchone()
     if not cartData:
         conn.close()
-        print('unknown uid')
+        slog('SCAN', f'unknown UID {nfcUid} from {request.remote_addr}')
         return jsonify({'status': 'error', 'message': 'Unknown Tag UID', 'uid': nfcUid}), 400
 
     cartId, name, lastLocation = cartData # lastLocation in String form
@@ -361,7 +404,7 @@ def processScan():
         cursor.execute('INSERT INTO history (cart_id, old_location, new_location, timestamp) VALUES (?, ?, ?, ?)', (cartId, lastLocation, clientLocation, timeNow))
         conn.commit()
 
-        print(f"[UPDATE] ID {cartId} moved from {lastLocation} to {clientLocation} ({timeNow})")
+        slog('SCAN', f'#{cartId} {lastLocation} -> {clientLocation}')
 
     conn.close()
     if locationChanged:
@@ -408,7 +451,7 @@ def enrollTag():
                         'message': 'That UID is already assigned to another cart'}), 409
 
     conn.close()
-    print(f"  [ENROLL] Cart #{cartId} ({row[0]}) -> UID {nfcUid}")
+    slog('ENROLL', f'#{cartId} ({row[0]}) -> UID {nfcUid}')
     broadcastUpdate()
     return jsonify({'status': 'success', 'cartId': cartId, 'uid': nfcUid})
 
@@ -433,7 +476,7 @@ def login_submit():
         session['authed'] = True
         session.permanent = True        # apply PERMANENT_SESSION_LIFETIME (10h)
         return redirect('/edit')
-    print(f"  [AUTH] Failed /login from {request.remote_addr}")
+    slog('AUTH', f'failed /login from {request.remote_addr}')
     return redirect('/login?error=1')
 
 
@@ -466,7 +509,7 @@ def emergency_unlock():
         session['emergency_at'] = time.time()
         # Hand back the server-observed IP so the edit page can show "you're logged".
         return jsonify({'status': 'success', 'ip': request.remote_addr})
-    print(f"  [AUTH] Failed /emergency/unlock from {request.remote_addr}")
+    slog('AUTH', f'failed /emergency/unlock from {request.remote_addr}')
     return jsonify({'status': 'error', 'message': 'Invalid password'}), 401
 
 
@@ -571,8 +614,8 @@ def updateCart(cart_id):
              contents, dateUsage, reason, request.remote_addr))
         conn.commit()
         conn.close()
-        print(f"  [EMERGENCY EDIT] Cart #{cart_id} -> contents={contents!r}, "
-              f"date_usage={dateUsage}, reason={reason!r}, ip={request.remote_addr}")
+        slog('EMERGENCY', f'#{cart_id} contents={contents!r} date={dateUsage} '
+                          f'reason={reason!r} ip={request.remote_addr}')
     else:
         # Normal mode: Jurassic Park only, and a successful save clears the marker.
         if row[0] != Locale.JurassicPark.toString():
@@ -583,7 +626,7 @@ def updateCart(cart_id):
                        (contents, dateUsage, cart_id))
         conn.commit()
         conn.close()
-        print(f"  [EDIT] Cart #{cart_id} -> contents={contents!r}, date_usage={dateUsage}")
+        slog('EDIT', f'#{cart_id} contents={contents!r} date={dateUsage}')
 
     broadcastUpdate()   # refresh dashboards with the new contents/date + marker
     broadcastReload()   # tell edit page(s) to reload with fresh data
@@ -726,7 +769,7 @@ def backup_loop():
                 src.backup(dst)
             src.close()
             dst.close()
-            print(f"  [BACKUP] Saved {dest_path}")
+            slog('BACKUP', f'saved {dest_path}')
 
             # Prune old backups
             backups = sorted([
@@ -736,9 +779,24 @@ def backup_loop():
             while len(backups) > KEEP_DAYS:
                 old = backups.pop(0)
                 os.remove(os.path.join(backup_dir, old))
-                print(f"  [BACKUP] Pruned {old}")
+                slog('BACKUP', f'pruned {old}')
         except Exception as e:
-            print(f"  [BACKUP ERROR] {e}")
+            slog('BACKUP', f'ERROR {e}')
+
+
+# ============================================================
+#  Servers
+# ============================================================
+
+class QuietWSGIServer(WSGIServer):
+    """WSGIServer that swallows noisy TLS handshake failures - a browser rejecting the
+    self-signed cert, a plaintext request sent to the HTTPS port, or a client dropping
+    mid-handshake - logging one tidy line instead of a full traceback."""
+    def wrap_socket_and_handle(self, client_socket, address):
+        try:
+            return super().wrap_socket_and_handle(client_socket, address)
+        except (ssl.SSLError, OSError) as e:
+            slog('TLS', f'handshake failed from {address[0]} ({type(e).__name__})')
 
 
 # ============================================================
@@ -760,17 +818,23 @@ if __name__ == '__main__':
     print("  Press Ctrl+C to stop")
     print("=" * 60)
 
-    # Plaintext listener for reads (dashboard) - no cert
+    # Plaintext listener for reads (dashboard) - no cert.
+    # log=None disables gevent's own per-request access log so only our log_request
+    # line prints (otherwise every request logs twice).
     read_server = WSGIServer(
         ('0.0.0.0', READ_PORT),
-        read_app
+        read_app,
+        log=None,
+        error_log=_error_log
     )
-    # TLS listener for writes (scanners, edits)
-    write_server = WSGIServer(
+    # TLS listener for writes (scanners, edits); QuietWSGIServer hushes handshake noise.
+    write_server = QuietWSGIServer(
         ('0.0.0.0', WRITE_PORT),
         write_app,
         certfile='cert.pem',
-        keyfile='key.pem'
+        keyfile='key.pem',
+        log=None,
+        error_log=_error_log
     )
 
     try:
