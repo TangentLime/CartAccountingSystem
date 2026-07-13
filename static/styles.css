@@ -147,15 +147,18 @@ h1 {
 /* ===== LANDSCAPE: zones are tall/narrow (~600 x 900) ===== */
 /* Strategy: prefer rows over columns since the zone is taller than wide */
 @media (orientation: landscape) {
-  .cards[data-count="1"] { grid-template-columns: 1fr;          grid-template-rows: 1fr; }
-  .cards[data-count="2"] { grid-template-columns: 1fr;          grid-template-rows: repeat(2, 1fr); }
-  .cards[data-count="3"] { grid-template-columns: 1fr;          grid-template-rows: repeat(3, 1fr); }
-  .cards[data-count="4"] { grid-template-columns: repeat(2, 1fr); grid-template-rows: repeat(2, 1fr); }
+  /* Rows are always thirds, so a card never grows taller than its 3-row size;
+     columns grow with the count. Fewer cards than the grid just leave empty cells
+     at the bottom (e.g. 4 carts -> 2 cols x 3 rows, bottom row empty). */
+  .cards[data-count="1"],
+  .cards[data-count="2"],
+  .cards[data-count="3"] { grid-template-columns: 1fr;            grid-template-rows: repeat(3, 1fr); }
+  .cards[data-count="4"],
   .cards[data-count="5"],
   .cards[data-count="6"] { grid-template-columns: repeat(2, 1fr); grid-template-rows: repeat(3, 1fr); }
   .cards[data-count="7"],
-  .cards[data-count="8"] { grid-template-columns: repeat(2, 1fr); grid-template-rows: repeat(4, 1fr); }
-  .cards[data-count="9"] { grid-template-columns: repeat(2, 1fr); grid-template-rows: repeat(5, 1fr); }
+  .cards[data-count="8"],
+  .cards[data-count="9"] { grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(3, 1fr); }
 }
 
 /* ===== PORTRAIT: zones are wide/short (~1000 x 600) ===== */
@@ -296,6 +299,23 @@ h1 {
 @keyframes content-fade {
   0%   { opacity: 0.15; }
   100% { opacity: 1; }
+}
+
+/* ========== Emergency-edit marker (issue #7) ========== */
+/* A ⚠️ badge pinned to the card corner when the cart was edited in emergency mode,
+   until cleared (server-side) by leaving MAL or a normal JP edit. Absolutely
+   positioned so it doesn't consume a grid cell. */
+.cart-card { position: relative; }
+.emergency-badge { display: none; }
+.cart-card.emergency .emergency-badge {
+  display: block;
+  position: absolute;
+  bottom: 0.2rem;
+  right: 0.35rem;
+  font-size: clamp(0.9rem, 1.8vmin, 1.4rem);
+  line-height: 1;
+  z-index: 2;
+  pointer-events: none;
 }
 
 /* Empty zone */

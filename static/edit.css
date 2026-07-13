@@ -223,3 +223,73 @@ button:disabled:active { transform: none; }
   color: #241a00;
 }
 #stale-banner button:hover { background: #ffcd39; border-color: #ffc107; }
+
+/* ========== Emergency mode (issue #7) ========== */
+/* Header button that opens the password modal. */
+.emergency-btn { background: #6e2b1f; border-color: #a5432c; color: #ffd9cf; }
+.emergency-btn:hover { background: #843427; border-color: #c0503a; }
+
+/* Red banner shown while emergency mode is active. */
+#emergency-banner[hidden] { display: none; }
+#emergency-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.85rem;
+  padding: 0.6rem 0.9rem;
+  background: #4a1d1d;
+  border: 1px solid #f44336;
+  border-radius: 8px;
+  color: #ffe5e5;
+  font-weight: 700;
+}
+#emergency-banner button { background: #f44336; border-color: #c0392b; color: #2a0a0a; }
+#emergency-banner button:hover { background: #ff5a4d; border-color: #d0433a; }
+
+/* Non-Jurassic-Park rows are flagged red while editing all carts. */
+.cart-row.non-jp { background: #4a1d1d; border-left-color: #f44336; }
+.cart-row.non-jp .cart-id  { color: #ffb3b3; }
+.cart-row.non-jp .cart-loc { color: #ffb3b3; }
+/* Small location label shown under the ID in emergency mode. */
+.cart-loc {
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #8aa5c2;
+}
+
+/* Text input inside a modal (password / reason), + its error line + danger button. */
+.modal-input {
+  width: 100%;
+  font-family: inherit;
+  font-size: 0.95rem;
+  color: #ffffff;
+  background: #0f1723;
+  border: 1px solid #3a4a63;
+  border-radius: 8px;
+  padding: 0.55rem 0.65rem;
+  margin-bottom: 0.6rem;
+}
+.modal-input:focus {
+  outline: none;
+  border-color: #6a8fc2;
+  box-shadow: 0 0 0 2px rgba(106, 143, 194, 0.25);
+}
+.modal-err { color: #f44336; font-size: 0.82rem; font-weight: 600; margin-bottom: 0.6rem; }
+.modal-err[hidden] { display: none; }
+.modal-danger { background: #8f2d27; border-color: #c0392b; color: #ffffff; }
+.modal-danger:hover { background: #a5342c; border-color: #d0433a; }
+
+/* Whole-page red pulse while emergency mode is active. Applied to <html> (with body
+   made transparent) so the pulse fills the viewport, not just the centered column. */
+html.emergency-mode body { background: transparent; }
+html.emergency-mode { animation: emergency-bg-pulse 1.6s ease-in-out infinite; }
+@keyframes emergency-bg-pulse {
+  0%, 100% { background: #0f1419; }
+  50%      { background: #3a1414; }
+}
+@media (prefers-reduced-motion: reduce) {
+  html.emergency-mode { animation: none; background: #2a1414; }
+}

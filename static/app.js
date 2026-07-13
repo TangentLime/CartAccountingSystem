@@ -87,11 +87,17 @@ function cartCardHtml(cart) {
   else if (warning) {
     classes.push('warning')
   }
+  if (cart.emergency_flag) classes.push('emergency');
+
+  // ⚠️ badge is always in the DOM; CSS reveals it only on .emergency cards, so
+  // updateCard just toggles the class (no markup churn for the FLIP reconciler).
+  const badge = `<span class="emergency-badge" title="Emergency edit — pending review">⚠️</span>`;
 
   if (cart.date_usage == 'Return')
   {
     return `
     <div class="${classes.join(' ')}" data-cart-id="${cart.id}">
+      ${badge}
       <div class="cart-id">ID: ${cart.id}</div>
       <div class="cart-contents">${escapeHtml(cart.contents)}</div>
       <div class="cart-date">Returning...</div>
@@ -99,6 +105,7 @@ function cartCardHtml(cart) {
   }
   return `
     <div class="${classes.join(' ')}" data-cart-id="${cart.id}">
+      ${badge}
       <div class="cart-id">ID: ${cart.id}</div>
       <div class="cart-contents">${escapeHtml(cart.contents)}</div>
       <div class="cart-date">📅 ${escapeHtml(cart.date_usage)}</div>
@@ -120,6 +127,7 @@ function updateCard(node, cart) {
   const warning = isWarning(cart);
   node.classList.toggle('overdue', !!overdue);
   node.classList.toggle('warning', !!warning && !overdue);
+  node.classList.toggle('emergency', !!cart.emergency_flag);
 
   const dateText = cart.date_usage === 'Return'
     ? 'Returning...'

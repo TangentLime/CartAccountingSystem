@@ -17,12 +17,19 @@
                 <span id="conn-status" class="connecting">◐ Connecting…</span>
                 <span id="status" class="connecting">Loading…</span>
                 <button id="reload-btn" type="button">Reload</button>
+                <button id="emergency-btn" type="button" class="emergency-btn"
+                        title="Unlock emergency editing of all carts">Emergency Change</button>
                 <!-- POST (not a link) so it can't be triggered cross-site as a GET -->
                 <form action="/logout" method="post">
                     <button type="submit" title="Log out of the edit session">Log out</button>
                 </form>
             </div>
         </header>
+
+        <div id="emergency-banner" hidden>
+            <span>🚨 EMERGENCY MODE — editing all carts. Every change is logged · IP: <strong id="emergency-ip">…</strong></span>
+            <button id="emergency-exit" type="button">Exit Emergency</button>
+        </div>
 
         <div id="stale-banner" hidden>
             <span>⚠️ Jurassic Park carts have changed since this list loaded.</span>
@@ -41,6 +48,34 @@
                 <div class="modal-actions">
                     <button id="stale-modal-reload" type="button" class="modal-reload">Reload</button>
                     <button id="stale-modal-proceed" type="button" class="modal-proceed">Proceed</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Emergency unlock: re-type the login password to authorize editing all carts. -->
+        <div id="emg-modal" class="modal-overlay" hidden>
+            <div class="modal-box" role="dialog" aria-modal="true" aria-labelledby="emg-title">
+                <p id="emg-title" class="modal-msg">Enter the password to unlock Emergency Change mode (edit any cart).</p>
+                <input id="emg-input" class="modal-input" type="password"
+                       autocomplete="current-password" placeholder="Password">
+                <p id="emg-err" class="modal-err" hidden></p>
+                <div class="modal-actions">
+                    <button id="emg-cancel" type="button">Cancel</button>
+                    <button id="emg-ok" type="button" class="modal-danger">Unlock</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Reason: required for every emergency save; stored in the audit log. -->
+        <div id="reason-modal" class="modal-overlay" hidden>
+            <div class="modal-box" role="dialog" aria-modal="true" aria-labelledby="reason-title">
+                <p id="reason-title" class="modal-msg">Reason for this emergency edit (required):</p>
+                <input id="reason-input" class="modal-input" type="text"
+                       placeholder="e.g. corrected mislabeled contents">
+                <p id="reason-err" class="modal-err" hidden>Please enter a reason.</p>
+                <div class="modal-actions">
+                    <button id="reason-cancel" type="button">Cancel</button>
+                    <button id="reason-ok" type="button" class="modal-danger">Save</button>
                 </div>
             </div>
         </div>

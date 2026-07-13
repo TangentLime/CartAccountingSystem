@@ -10,6 +10,10 @@ const TARGET_LOCATION = 'Jurassic Park';
 // SSE handler won't compare a live snapshot against an empty/absent baseline.
 let shownJpIds = null;
 
+// Emergency mode: when true, the page lists ALL carts (non-JP shown red) and each
+// save requires a reason and is sent as an emergency edit. Unlocked via password.
+let emergencyMode = false;
+
 // ---------- helpers ----------
 
 function escapeHtml(s) {
@@ -65,10 +69,16 @@ function rowHtml(cart) {
   const contents = isEmpty ? '' : escapeHtml(raw);
   const placeholder = isEmpty ? 'Empty' : '';
   const pickerDate = dbToPicker(cart.date_usage);
+  // In emergency mode we list every cart; flag non-JP ones red and show their location.
+  const nonJp = emergencyMode && cart.current_location !== TARGET_LOCATION;
+  const rowClass = 'cart-row' + (nonJp ? ' non-jp' : '');
+  const locLine = emergencyMode
+    ? `<span class="cart-loc">${escapeHtml(cart.current_location)}</span>` : '';
   return `
-    <div class="cart-row" data-cart-id="${cart.id}">
+    <div class="${rowClass}" data-cart-id="${cart.id}">
       <div class="cart-meta">
         <span class="cart-id">ID ${cart.id}</span>
+        ${locLine}
       </div>
       <div class="field">
         <label for="contents-${cart.id}">Contents</label>
@@ -137,14 +147,27 @@ async function loadCarts() {
       setStatus('error', `Load failed (${resp.status})`);
       return;
     }
-    const carts = await resp.json();
-    const jpCarts = carts
-      .filter(c => c.current_location === TARGET_LOCATION)
-      .sort((a, b) => a.id - b.id);
-    renderRows(jpCarts);
-    shownJpIds = jpCarts.map(c => c.id);   // baseline for staleness comparison
+    const all = await resp.json();
+    let carts;
+    if (emergencyMode) {
+      // Show every cart with non-JP (red) carts FIRST -- they're the reason to be in
+      // emergency mode -- then JP carts below; each group by id. Membership/stale
+      // tracking is JP-specific, so it's off here.
+      carts = all.slice().sort((a, b) => {
+        const aJp = a.current_location === TARGET_LOCATION ? 1 : 0;
+        const bJp = b.current_location === TARGET_LOCATION ? 1 : 0;
+        return aJp - bJp || a.id - b.id;
+      });
+      shownJpIds = null;
+    } else {
+      carts = all
+        .filter(c => c.current_location === TARGET_LOCATION)
+        .sort((a, b) => a.id - b.id);
+      shownJpIds = carts.map(c => c.id);   // baseline for staleness comparison
+    }
+    renderRows(carts);
     hideBanner();                          // this render is now the fresh truth
-    setStatus('ok', `Loaded ${jpCarts.length} cart(s)`);
+    setStatus('ok', `Loaded ${carts.length} cart(s)`);
   } catch (err) {
     console.error(err);
     setStatus('error', 'Network error');
@@ -198,12 +221,25 @@ async function saveCart(cartId) {
     }
   }
 
+  // Emergency edits require a typed reason (entered in a modal) and are sent flagged.
+  let reason = null;
+  if (emergencyMode) {
+    reason = await promptReason();
+    if (reason === null) {            // operator cancelled the reason modal
+      setRowMsg(cartId, '', 'Cancelled');
+      return;
+    }
+  }
+
   setRowMsg(cartId, '', 'Saving…');
   try {
+    const body = emergencyMode
+      ? { contents, date_usage: dateUsage, emergency: true, reason }
+      : { contents, date_usage: dateUsage };
     const resp = await fetch(`/api/carts/${cartId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ contents, date_usage: dateUsage })
+      body: JSON.stringify(body)
     });
 
     if (resp.status === 401) {
@@ -265,6 +301,114 @@ function confirmStale() {
   });
 }
 
+// ---------- emergency mode ----------
+
+// Password modal -> resolves to the typed password, or null if cancelled. Pass an
+// errorMsg to show a red hint (e.g. after a wrong attempt) when reopening.
+function promptPassword(errorMsg) {
+  return new Promise(resolve => {
+    const modal = document.getElementById('emg-modal');
+    const input = document.getElementById('emg-input');
+    const okBtn = document.getElementById('emg-ok');
+    const cancelBtn = document.getElementById('emg-cancel');
+    const err = document.getElementById('emg-err');
+
+    input.value = '';
+    err.textContent = errorMsg || '';
+    err.hidden = !errorMsg;
+
+    const done = (val) => {
+      modal.hidden = true;
+      okBtn.removeEventListener('click', onOk);
+      cancelBtn.removeEventListener('click', onCancel);
+      input.removeEventListener('keydown', onKey);
+      resolve(val);
+    };
+    const onOk = () => { if (input.value) done(input.value); };
+    const onCancel = () => done(null);
+    const onKey = (e) => { if (e.key === 'Enter') onOk(); };
+
+    okBtn.addEventListener('click', onOk);
+    cancelBtn.addEventListener('click', onCancel);
+    input.addEventListener('keydown', onKey);
+    modal.hidden = false;
+    input.focus();
+  });
+}
+
+// Reason modal -> resolves to a non-empty trimmed reason, or null if cancelled.
+function promptReason() {
+  return new Promise(resolve => {
+    const modal = document.getElementById('reason-modal');
+    const input = document.getElementById('reason-input');
+    const okBtn = document.getElementById('reason-ok');
+    const cancelBtn = document.getElementById('reason-cancel');
+    const err = document.getElementById('reason-err');
+
+    input.value = '';
+    err.hidden = true;
+
+    const done = (val) => {
+      modal.hidden = true;
+      okBtn.removeEventListener('click', onOk);
+      cancelBtn.removeEventListener('click', onCancel);
+      resolve(val);
+    };
+    const onOk = () => {
+      const v = input.value.trim();
+      if (!v) { err.hidden = false; input.focus(); return; }
+      done(v);
+    };
+    const onCancel = () => done(null);
+
+    okBtn.addEventListener('click', onOk);
+    cancelBtn.addEventListener('click', onCancel);
+    modal.hidden = false;
+    input.focus();
+  });
+}
+
+// Prompt for the password and unlock emergency mode server-side; loop on wrong password.
+async function startEmergency() {
+  let errMsg = '';
+  while (true) {
+    const pw = await promptPassword(errMsg);
+    if (pw === null) return;                  // cancelled
+    try {
+      const resp = await fetch('/emergency/unlock', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: pw })
+      });
+      if (resp.ok) {
+        const data = await resp.json().catch(() => ({}));
+        enterEmergency(data.ip);
+        return;
+      }
+      errMsg = resp.status === 401 ? 'Incorrect password' : `Unlock failed (${resp.status})`;
+    } catch (e) {
+      console.error(e);
+      errMsg = 'Network error';
+    }
+  }
+}
+
+function enterEmergency(ip) {
+  emergencyMode = true;
+  document.getElementById('emergency-ip').textContent = ip || 'unknown';
+  document.documentElement.classList.add('emergency-mode');
+  document.getElementById('emergency-banner').hidden = false;
+  loadCarts();
+}
+
+async function exitEmergency() {
+  try { await fetch('/emergency/lock', { method: 'POST' }); } catch (e) { /* best effort */ }
+  emergencyMode = false;
+  document.documentElement.classList.remove('emergency-mode');
+  document.getElementById('emergency-banner').hidden = true;
+  loadCarts();
+}
+
 // Order-independent set equality on two id arrays.
 function sameIdSet(a, b) {
   if (a.length !== b.length) return false;
@@ -287,7 +431,12 @@ function watchForChanges() {
   // The server sends a 'reload' event after a successful edit-page save. Hold
   // briefly first so the "✓ Saved" confirmation is visible before the refresh
   // (the trigger is still server-driven; the delay is just display timing).
-  es.addEventListener('reload', () => setTimeout(() => location.reload(), 600));
+  // After a save the server broadcasts 'reload'. Normal mode does a full page reload;
+  // emergency mode does a soft re-fetch so the operator stays unlocked for consecutive
+  // fixes. A real F5 still exits emergency mode via /edit (which clears the session).
+  es.addEventListener('reload', () => setTimeout(() => {
+    if (emergencyMode) loadCarts(); else location.reload();
+  }, 600));
 
   es.addEventListener('snapshot', (e) => {
     if (shownJpIds === null) return;   // no baseline yet; wait for the first load
@@ -314,6 +463,8 @@ function watchForChanges() {
 
 document.getElementById('reload-btn').addEventListener('click', loadCarts);
 document.getElementById('stale-reload').addEventListener('click', loadCarts);
+document.getElementById('emergency-btn').addEventListener('click', startEmergency);
+document.getElementById('emergency-exit').addEventListener('click', exitEmergency);
 
 loadCarts();
 watchForChanges();
