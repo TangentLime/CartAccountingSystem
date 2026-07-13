@@ -25,6 +25,15 @@ function setStatus(cls, text) {
   el.textContent = text;
 }
 
+// Live server-connection pill (mirrors the dashboard): ● Connected / ◐ Connecting /
+// ✕ Disconnected, driven by the SSE EventSource in watchForChanges().
+function setConn(cls, text) {
+  const el = document.getElementById('conn-status');
+  el.className = cls;
+  const prefix = cls === 'ok' ? '● ' : (cls === 'error' ? '✕ ' : '◐ ');
+  el.textContent = prefix + text;
+}
+
 // DB stores dates as MM-DD-YYYY; <input type=date> wants YYYY-MM-DD.
 function dbToPicker(s) {
   if (!s) return '';
@@ -178,6 +187,17 @@ async function saveCart(cartId) {
     return;
   }
 
+  // If the JP list drifted since load (stale banner up), force an explicit choice:
+  // Reload (refresh the list) or Proceed (save anyway). A cart that has since left
+  // JP is rejected server-side with 403, so proceeding fails safely on its own.
+  if (bannerActive()) {
+    const choice = await confirmStale();
+    if (choice === 'reload') {
+      loadCarts();
+      return;
+    }
+  }
+
   setRowMsg(cartId, '', 'Saving…');
   try {
     const resp = await fetch(`/api/carts/${cartId}`, {
@@ -218,6 +238,32 @@ async function saveCart(cartId) {
 
 function showBanner() { document.getElementById('stale-banner').hidden = false; }
 function hideBanner() { document.getElementById('stale-banner').hidden = true; }
+function bannerActive() { return !document.getElementById('stale-banner').hidden; }
+
+// Modal shown when saving while the stale banner is up. Resolves to 'reload' or
+// 'proceed' -- one of the two buttons MUST be clicked (there is no backdrop/Esc
+// dismissal), so the operator always makes an explicit choice.
+function confirmStale() {
+  return new Promise(resolve => {
+    const modal = document.getElementById('stale-modal');
+    const reloadBtn = document.getElementById('stale-modal-reload');
+    const proceedBtn = document.getElementById('stale-modal-proceed');
+
+    const done = (choice) => {
+      modal.hidden = true;
+      reloadBtn.removeEventListener('click', onReload);
+      proceedBtn.removeEventListener('click', onProceed);
+      resolve(choice);
+    };
+    const onReload = () => done('reload');
+    const onProceed = () => done('proceed');
+
+    reloadBtn.addEventListener('click', onReload);
+    proceedBtn.addEventListener('click', onProceed);
+    modal.hidden = false;
+    reloadBtn.focus();   // Reload is the recommended default
+  });
+}
 
 // Order-independent set equality on two id arrays.
 function sameIdSet(a, b) {
@@ -230,7 +276,13 @@ function sameIdSet(a, b) {
 // on screen. Deliberately does NOT re-render - the operator's in-progress edits stay
 // put; we only surface a Reload prompt. Relative URL -> same-origin HTTPS (:5000).
 function watchForChanges() {
+  setConn('connecting', 'Connecting…');
   const es = new EventSource('/api/stream');
+
+  // Live connection state. EventSource auto-reconnects, so onopen fires again on
+  // recovery -> the pill returns to Connected without manual retry logic.
+  es.onopen  = () => setConn('ok', 'Connected');
+  es.onerror = () => setConn('error', 'Disconnected');
 
   // The server sends a 'reload' event after a successful edit-page save. Hold
   // briefly first so the "✓ Saved" confirmation is visible before the refresh

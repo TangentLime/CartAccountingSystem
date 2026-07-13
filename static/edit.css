@@ -44,15 +44,15 @@ h1 {
 
 .status { display: flex; align-items: center; gap: 0.75rem; }
 
-#status {
+#status, #conn-status {
   font-weight: 600;
   padding: 0.35rem 0.85rem;
   border-radius: 999px;
   font-size: 0.9rem;
 }
-#status.ok          { background: rgba(76, 175, 80, 0.15);  color: #4caf50; }
-#status.connecting  { background: rgba(255, 152, 0, 0.15);  color: #ff9800; }
-#status.error       { background: rgba(244, 67, 54, 0.15);  color: #f44336; }
+#status.ok,         #conn-status.ok         { background: rgba(76, 175, 80, 0.15);  color: #4caf50; }
+#status.connecting, #conn-status.connecting { background: rgba(255, 152, 0, 0.15);  color: #ff9800; }
+#status.error,      #conn-status.error      { background: rgba(244, 67, 54, 0.15);  color: #f44336; }
 
 /* ========== Buttons ========== */
 button {
@@ -164,6 +164,41 @@ button:disabled:active { transform: none; }
   text-align: center;
   padding: 2rem 0;
 }
+
+/* ========== Stale-edit confirm modal ========== */
+/* Shown when saving against a stale list; must be dismissed via a button. */
+.modal-overlay[hidden] { display: none; }
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background: rgba(0, 0, 0, 0.6);
+}
+.modal-box {
+  width: 100%;
+  max-width: 380px;
+  background: #1a2432;
+  border: 1px solid #3a4a63;
+  border-radius: 12px;
+  padding: 1.25rem 1.4rem;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+}
+.modal-msg {
+  font-size: 0.95rem;
+  line-height: 1.45;
+  margin-bottom: 1.1rem;
+  color: #e6e6e6;
+}
+.modal-actions { display: flex; justify-content: flex-end; gap: 0.6rem; }
+/* Reload is the safe/recommended action (green); Proceed is the risky one (red). */
+.modal-reload  { background: #2e7d32; border-color: #3a9d40; color: #ffffff; }
+.modal-reload:hover  { background: #369140; border-color: #46b552; }
+.modal-proceed { background: #8f2d27; border-color: #c0392b; color: #ffffff; }
+.modal-proceed:hover { background: #a5342c; border-color: #d0433a; }
 
 /* ========== Stale-data banner ========== */
 /* Shown when SSE reports the JP cart set changed since this list loaded.
