@@ -31,11 +31,13 @@ display — including a smart TV that can't install a cert — can show the dash
 
 - [Hardware](#hardware)
 - [Software Architecture](#software-architecture)
+- [Authentication & Access](#authentication--access)
 - [Repository Layout](#repository-layout)
 - [Server Setup](#server-setup)
 - [Client (ESP32) Setup](#client-esp32-setup)
 - [Tag Enrollment](#tag-enrollment)
 - [API Reference](#api-reference)
+- [Database Schema](#database-schema)
 - [Configuration Reference](#configuration-reference)
 - [Troubleshooting](#troubleshooting)
 - [Project Decisions](#project-decisions)
@@ -86,14 +88,20 @@ Any always-on x86 machine running Windows or Linux. Tested on Windows 10/11. Rec
   - HTTPS listener on **:5000** → `write_app` (scans, enrollments, the edit page + its saves)
   - HTTP  listener on **:5001** → `read_app` (dashboard, SSE stream, history)
 - **Database:** SQLite with WAL mode (`trackingFile.db`)
-- **Auth:** Shared API key in the `X-API-Key` header on the write routes (see per-endpoint table below)
+- **Auth:** two tiers — a shared API key (`X-API-Key`) for machine/script callers
+  (scanners, `enroll.py`), and a **session login** for the human `/edit` UI. See
+  [Authentication & Access](#authentication--access).
 - **Encryption:** Self-signed TLS certificate (`cert.pem`/`key.pem`) — the HTTPS *write* listener only
-- **Live updates:** Server-Sent Events (`/api/stream`, on the read listener) push full cart state to every dashboard on each change — a write on `:5000` broadcasts to readers on `:5001` (shared in-process state)
+- **Live updates:** Server-Sent Events (`/api/stream`) push full cart state to every
+  dashboard on each change — a write on `:5000` broadcasts to readers on `:5001`
+  (shared in-process state). The stream is served on **both** listeners: the read
+  listener for dashboards, and the HTTPS write listener so the edit page can subscribe
+  same-origin (an HTTP `EventSource` from an HTTPS page is blocked as mixed content).
 - **Resilience:** daily SQLite `.backup()` to `backups/` and a Windows keep-awake thread (both skipped when `testing = True`)
 
 ### Dashboard & editing
-- **`GET /` (HTTP :5001)** — full-screen live board (`static/dashboard.html` + `app.js` + `styles.css`), grouped by location, with overdue/warning highlighting. Updates in real time over SSE. Plaintext, so any display can load it with no cert.
-- **`GET /edit` (HTTPS :5000)** — a page for a computer stationed in Jurassic Park to edit each JP cart's **contents** and **use-by date**. Saves via `PATCH /api/carts/<id>` over HTTPS; edits broadcast instantly to the live board.
+- **`GET /` (HTTP :5001)** — full-screen live board (`static/dashboard.html` + `app.js` + `styles.css`), grouped by location, with overdue/warning highlighting. Updates in real time over SSE. Plaintext, so any display can load it with no cert. Cards animate smoothly as carts move between columns and show an emergency badge on any cart flagged by an emergency edit; animations honor `prefers-reduced-motion`.
+- **`GET /edit` (HTTPS :5000)** — a **login-gated** page for a computer stationed in Jurassic Park to edit each JP cart's **contents** and **use-by date**. Saves via `PATCH /api/carts/<id>` over HTTPS; edits broadcast instantly to the live board. If another edit changes the JP cart list while you're working, the page detects the drift over SSE and prompts you to reload before saving stale data. See [Authentication & Access](#authentication--access) for the login and Emergency Edit Mode.
 
 ### Client side (`NFCSystem/`)
 - **MCU:** ESP32-WROOM-32
@@ -111,17 +119,56 @@ Any always-on x86 machine running Windows or Linux. Tested on Windows 10/11. Rec
 5. Server responds with the cart name and outcome; the change is broadcast to dashboards (on `:5001`) via SSE
 6. ESP32 plays a tone pattern (success / unknown / error) via the buzzer
 
+## Authentication & Access
+
+There are two independent ways to authenticate, plus a time-boxed elevation for
+exceptional edits. All three live on the HTTPS write listener.
+
+### API key — machines & scripts
+Scanners and helper scripts (`enroll.py`) send the shared secret in the `X-API-Key`
+header. It's compared in constant time (`hmac.compare_digest`) and gates `POST /scan`
+and `POST /enroll`. The key is set as `NFC_API_KEY` in `.env` and must match every
+client. It's only ever sent over the encrypted write listener.
+
+### Session login — the edit UI
+The `/edit` page is gated behind a password login instead of an API key, so a person
+can use it from a browser without pasting a secret header. `POST /login` compares the
+submitted password (constant time) against `EDIT_PASSWORD`; on success it sets a Flask
+session cookie signed with `SECRET_KEY`. The cookie is **Secure** (HTTPS-only),
+**HttpOnly** (JS can't read it), **SameSite=Lax** (CSRF mitigation), and expires after
+10 hours. `POST /logout` clears it. The write API routes (`GET /api/carts`,
+`PATCH /api/carts/<id>`) accept **either** a valid session **or** a valid API key, so
+both the browser edit page and script callers work.
+
+### Emergency Edit Mode (issue #7)
+Normal edits are restricted to carts in Jurassic Park. When a cart elsewhere needs a
+correction, a logged-in operator can **re-enter the password** at `POST /emergency/unlock`
+to open a **15-minute** window (`EMERGENCY_WINDOW_SECONDS`) that permits editing **any**
+cart regardless of location. Emergency edits are deliberately expensive:
+
+- Each one **requires a typed reason** (empty reasons are rejected).
+- The server sets `emergency_flag = 1` on the cart (surfaced as a badge on the dashboard)
+  and writes an audit row to the `emergency_log` table (cart, timestamp, new values,
+  reason, client IP).
+- The unlock is **fail-closed**: it lives only in the session, is dropped on any `/edit`
+  page (re)load, can be ended early with `POST /emergency/lock`, and expires after 15
+  minutes.
+- The marker clears automatically on a normal (JP) save of that cart or when the cart is
+  scanned out of MAL.
+
 ## Repository Layout
 
 ```
 serverSystem.py         Flask server: write (HTTPS :5000) + read (HTTP :5001) listeners
-static/                 Browser assets (edit page served by write_app, dashboard by read_app)
+static/                 Browser assets (edit/login served by write_app, dashboard by read_app)
   dashboard.html          Live board markup
   app.js                  SSE client + rendering for the board
   styles.css              Board styling (kiosk-oriented)
-  edit.html               Jurassic Park contents/date editor
+  edit.html               Jurassic Park contents/date editor (+ emergency mode)
   edit.js                 Loads JP carts, saves via PATCH /api/carts/<id>
   edit.css                Editor styling (interactive, not kiosk)
+  login.html              Password login form for the edit page
+  favicon-*.svg           Per-page favicons (dashboard / edit / login)
 enroll.py               One-off: associate NFC UIDs with cart records
 localClientTesting.py   Keyboard-driven fake scanner for local testing
 generate_cert.py        Generates self-signed cert.pem/key.pem for the HTTPS write listener (pinned by scanners)
@@ -135,7 +182,7 @@ NFCSystem/              ESP32 firmware (PlatformIO)
   src/main.cpp            Scanner firmware
   include/config.h        Device secrets/config (gitignored; see Examples/)
 Examples/               Sanitized templates
-  .env.example            Server env template (NFC_API_KEY)
+  .env.example            Server env template (NFC_API_KEY, EDIT_PASSWORD, SECRET_KEY)
   config.example.h        Firmware config template
   generate_cert.example.py  Cert-generation template
 ```
@@ -150,9 +197,13 @@ The production server lives in `C:\NFC-Tracker` on the Windows host.
    ```
 2. **Create `.env`** next to `serverSystem.py` (copy from `Examples/.env.example`):
    ```
-   NFC_API_KEY=your-shared-secret
+   NFC_API_KEY=your-shared-secret     # scanner/script auth (X-API-Key header)
+   EDIT_PASSWORD=your-edit-password    # password for the /edit login page
+   SECRET_KEY=a-long-random-string     # signs the login session cookie
    ```
-   The server refuses to start if `NFC_API_KEY` is unset.
+   The server **refuses to start** if any of these three are unset (see
+   `serverSystem.py`). Use a long, random value for `SECRET_KEY` — it's what stops a
+   logged-in session cookie from being forged.
 3. **Generate the TLS certificate** for the HTTPS write listener:
    ```cmd
    python generate_cert.py
@@ -262,29 +313,58 @@ Associates an NFC UID with a cart record.
 ```
 **Responses:** `200` ok · `400` missing fields · `404` no such cart · `409` UID already assigned
 
-#### `GET /edit`  *(open — HTML)*
-The Jurassic Park contents/date editor. Served on the write listener (not the read one) so
-its same-origin API calls stay on HTTPS. The page sends the API key on the calls below.
+#### `GET /login`  *(open — HTML)* · `POST /login` · `POST /logout`
+The password login for the edit UI. `GET /login` serves the form (and redirects to
+`/edit` if already logged in). `POST /login` takes a form field `password`, compares it
+(constant time) to `EDIT_PASSWORD`, and on success sets the signed session cookie and
+redirects to `/edit`; on failure it redirects to `/login?error=1`. `POST /logout` clears
+the session. `POST /login` is rate-limited to **10/min** to throttle guessing.
 
-#### `GET /api/carts`  *(requires `X-API-Key`)*
+#### `GET /edit`  *(login required — HTML)*
+The Jurassic Park contents/date editor. Served on the write listener (not the read one) so
+its same-origin API calls stay on HTTPS. Redirects to `/login` when not authenticated.
+Any (re)load of this page also drops any active emergency unlock (fail-closed).
+
+#### `POST /emergency/unlock`  *(login required)*
+Opens a 15-minute window that allows editing any cart, not just Jurassic Park ones.
+Requires re-submitting the login password. Rate-limited to **10/min**.
+
+**Request body:** `{"password": "your-edit-password"}`
+**Responses:** `200` `{"status":"success","ip":"..."}` · `401` invalid password
+
+#### `POST /emergency/lock`  *(login required)*
+Ends the emergency window early. **Responses:** `200` ok.
+
+#### `GET /api/carts`  *(requires a session **or** `X-API-Key`)*
 Returns all carts and their current state. It's a read, but it lives here because the HTTPS
 edit page fetches it same-origin — an HTTP fetch from an HTTPS page is blocked as mixed content.
 ```json
 [
   {"id": 0, "nfc_uid": "04A1B2C3D4E5F6", "name": "Condor",
-   "contents": "Alpha", "date_usage": "06-05-2026", "current_location": "JIT"}
+   "contents": "Alpha", "date_usage": "06-05-2026",
+   "current_location": "JIT", "emergency_flag": 0}
 ]
 ```
 
-#### `PATCH /api/carts/<id>`  *(requires `X-API-Key`)*
-Edits a cart's `contents` and `date_usage`. Only carts currently in **Jurassic Park** may
-be edited; `date_usage` must be `MM-DD-YYYY`. Broadcasts the change to dashboards.
+#### `PATCH /api/carts/<id>`  *(requires a session **or** `X-API-Key`)*
+Edits a cart's `contents` and `date_usage`; `date_usage` must be `MM-DD-YYYY`. Broadcasts
+the change to dashboards. Rate-limited to **30/min**.
 
-**Request body:**
+- **Normal mode** — only carts currently in **Jurassic Park** may be edited; a successful
+  save clears any emergency marker on the cart.
+- **Emergency mode** — set `"emergency": true` and include a non-empty `"reason"`. Requires
+  a freshly-unlocked session (the API-key path can't use emergency mode). Edits **any**
+  cart, sets its emergency marker, and writes an `emergency_log` audit row.
+
+**Request body (normal):**
 ```json
 {"contents": "Widgets", "date_usage": "07-15-2026"}
 ```
-**Responses:** `200` saved · `400` bad body/date · `403` cart not in Jurassic Park · `404` no such cart
+**Request body (emergency):**
+```json
+{"contents": "Widgets", "date_usage": "07-15-2026", "emergency": true, "reason": "mislabeled tag"}
+```
+**Responses:** `200` saved · `400` bad body/date or missing reason · `403` cart not in Jurassic Park (normal mode) or emergency locked · `404` no such cart
 
 #### `GET /health`  *(open)*
 Unauthenticated heartbeat: `{"status":"ok","time":"..."}`.
@@ -311,6 +391,45 @@ every change, plus periodic heartbeats.
 #### `GET /health`  *(open)*
 Same heartbeat as the write listener.
 
+## Database Schema
+
+SQLite (`trackingFile.db`, WAL mode), created and migrated by `init_database()` on
+startup. Three tables:
+
+### `carts` — current state (9 fixed rows)
+| Column | Type | Notes |
+|---|---|---|
+| `id` | INTEGER PK | `0`–`8`; the 9 carts are seeded on first run |
+| `nfc_uid` | TEXT UNIQUE | Enrolled tag UID (`NULL` until enrolled) |
+| `name` | TEXT | Fixed display name (Condor, Albatross, …, Owl) |
+| `contents` | TEXT | User-editable; reset to `Empty` when scanned out of MAL |
+| `date_usage` | TEXT | Use-by date `MM-DD-YYYY`; reset to `Return` on MAL exit |
+| `current_location` | TEXT | `Jurassic Park` · `JIT` · `MAL` |
+| `emergency_flag` | INTEGER | `1` if a pending emergency edit; else `0` |
+
+### `history` — append-only movement log
+| Column | Type | Notes |
+|---|---|---|
+| `log_id` | INTEGER PK AUTOINCREMENT | |
+| `cart_id` | INTEGER | |
+| `old_location` / `new_location` | TEXT | |
+| `timestamp` | TEXT | `MM-DD-YYYY HH:MM:SS` |
+
+### `emergency_log` — audit trail for emergency edits
+| Column | Type | Notes |
+|---|---|---|
+| `log_id` | INTEGER PK AUTOINCREMENT | |
+| `cart_id` | INTEGER | |
+| `timestamp` | TEXT | |
+| `contents` / `date_usage` | TEXT | The values written by the emergency edit |
+| `reason` | TEXT | Operator-supplied justification (required) |
+| `ip` | TEXT | Client IP that made the edit |
+
+> **Migrations** run on every startup and are idempotent: legacy `In Transit` rows are
+> renamed to `MAL`, and `carts.emergency_flag` / the `emergency_log` table are added if a
+> pre-issue-#7 database lacks them (SQLite has no `ADD COLUMN IF NOT EXISTS`, so the code
+> guards on the current column list).
+
 ## Configuration Reference
 
 ### Server (`.env`)
@@ -318,6 +437,10 @@ Same heartbeat as the write listener.
 | Variable | Description | Required |
 |---|---|---|
 | `NFC_API_KEY` | Shared secret for the `X-API-Key` header. Must match clients. | ✅ |
+| `EDIT_PASSWORD` | Password for the `/edit` login page (and to unlock emergency mode). | ✅ |
+| `SECRET_KEY` | Long random string Flask uses to sign the login session cookie. | ✅ |
+
+The server exits at startup if any of these three is unset.
 
 ### Server (top of `serverSystem.py`)
 
@@ -329,11 +452,14 @@ Same heartbeat as the write listener.
 | `testing` | `True` | When `True`, skip keep-awake + backup threads |
 | `MAX_SSE_SUBS` | `50` | Max concurrent dashboard SSE connections; beyond this, `/api/stream` returns `503` (anti-DoS) |
 | `MAX_CONTENT_LENGTH` | `64 KB` | Request-body cap on both listeners; larger POSTs get `413` (anti-DoS) |
+| `EMERGENCY_WINDOW_SECONDS` | `15 * 60` | How long an emergency unlock stays valid (15 min) |
+| `PERMANENT_SESSION_LIFETIME` | `10 hours` | Login session cookie lifetime |
 | `Locale` enum | `InTransit`, `JurassicPark`, `JIT`, `MAL` | Valid location values. On startup any legacy `In Transit` rows are migrated to `MAL`. |
 
 **Rate limiting:** the API is rate-limited per client IP via `flask-limiter` (in-memory).
 Defaults: write listener 120/min, read listener 300/min, with tighter caps on
-`POST /scan` (60/min), `POST /enroll` (20/min), and `PATCH /api/carts/<id>` (30/min).
+`POST /scan` (60/min), `POST /enroll` (20/min), `PATCH /api/carts/<id>` (30/min), and
+`POST /login` / `POST /emergency/unlock` (10/min each, to throttle password guessing).
 Exceeding a limit returns `429`. All values are tunable constants/decorators in
 `serverSystem.py`.
 
@@ -433,6 +559,19 @@ The ESP32 is dirt cheap (~$10), has WiFi built in, and is well-supported. The PN
 For an internal cart-tracking system on a trusted network, a shared secret is sufficient.
 mTLS adds significant complexity (per-client certs, rotation, revocation). OAuth is overkill
 — there are no user accounts, just trusted devices.
+
+### Why a session login for the edit page (not the API key)?
+The edit page is used by a *person* in a browser, so pasting an `X-API-Key` header on every
+request isn't practical. A password login with a signed, HttpOnly, Secure session cookie is
+the browser-native fit, and it keeps the machine key out of a human-facing surface. The API
+routes still accept the key too, so scripts keep working.
+
+### Why an emergency mode instead of just always allowing any-cart edits?
+Restricting normal edits to Jurassic Park prevents accidents (editing a cart that isn't in
+front of you). Real exceptions still happen, so emergency mode is a deliberate, auditable
+escape hatch: re-enter the password, give a reason, and every such edit is logged and flagged
+for review. It's fail-closed — time-boxed to 15 minutes and dropped on any page reload — so
+the elevated access can't be left open by accident.
 
 ### Why cert pinning on the scanners (not `setInsecure`)?
 Scanners write, so they must use HTTPS — and to make that HTTPS actually mean something, the
