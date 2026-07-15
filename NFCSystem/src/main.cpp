@@ -1,22 +1,23 @@
 /*
  * Cart Tracker - NFC Scanner Station
- * 
- * Hardware: ESP32-WROOM-32 + PN532 (I2C) + KY-006 buzzer
- * 
- * Wiring:
- *   PN532 VCC -> ESP32 3V3
- *   PN532 GND -> ESP32 GND
- *   PN532 SDA -> ESP32 GPIO 21
- *   PN532 SCL -> ESP32 GPIO 22
- *   KY-006 S  -> ESP32 GPIO 25
- *   KY-006 -  -> ESP32 GND
+ *
+ * Hardware: ESP32-WROOM-32 + PN532 (SPI) + KY-006 buzzer
+ *
+ * Wiring (PN532 in hardware-SPI mode on the ESP32's default VSPI bus):
+ *   PN532 VCC  -> ESP32 3V3
+ *   PN532 GND  -> ESP32 GND
+ *   PN532 SCK  -> ESP32 GPIO 18
+ *   PN532 MISO -> ESP32 GPIO 19
+ *   PN532 MOSI -> ESP32 GPIO 23
+ *   PN532 SS   -> ESP32 GPIO 5
+ *   KY-006 S   -> ESP32 GPIO 25
+ *   KY-006 -   -> ESP32 GND
  *   KY-006 middle pin -> 3V3 (if labeled VCC) or leave NC
- * 
- * PN532 DIP switches: 1=OFF, 2=ON  (I2C mode)
+ *
+ * PN532 DIP switches: 1=OFF, 2=ON  (SPI mode)
  */
 
 #include <Arduino.h>
-#include <Wire.h>
 #include <Adafruit_PN532.h>
 #include <WiFi.h>
 #include <HTTPClient.h>
@@ -26,8 +27,9 @@
 
 #include "config.h"
 
-// PN532 over I2C - no SS or IRQ pins
-Adafruit_PN532 nfc(-1, -1);
+// PN532 over hardware SPI: SS on GPIO 5, with SCK/MISO/MOSI on the ESP32's
+// default VSPI pins (18/19/23). Single-arg constructor selects the SPI backend.
+Adafruit_PN532 nfc(PN532_SS);
 
 // TLS client for HTTPS writes to the server. The server's self-signed cert is
 // pinned via client.setCACert(SERVER_CERT) in setup() (see the TLS setup block).
@@ -196,15 +198,14 @@ void setup() {
   pinMode(BUZZER_PIN, OUTPUT);
   digitalWrite(BUZZER_PIN, LOW);
 
-  // PN532 over I2C
-  Wire.begin(SDA_PIN, SCL_PIN);
+  // PN532 over hardware SPI
   nfc.begin();
 
   uint32_t version = nfc.getFirmwareVersion();
   if (!version) {
     Serial.println("ERROR: PN532 not found.");
-    Serial.println("  Check wiring (SDA=21, SCL=22, VCC=3V3, GND=GND)");
-    Serial.println("  Check DIP switches: 1=OFF, 2=ON for I2C mode");
+    Serial.println("  Check SPI wiring (SCK=18, MISO=19, MOSI=23, SS=5)");
+    Serial.println("  Check DIP switches for SPI mode (SW1=OFF, SW2=ON)");
     beepBootFailLoop();  // never returns
   }
   Serial.printf("PN532 firmware: 0x%08X\n", version);
