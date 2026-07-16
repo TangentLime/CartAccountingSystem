@@ -49,9 +49,9 @@ display — including a smart TV that can't install a cert — can show the dash
 | Part | Notes |
 |---|---|
 | ESP32-WROOM-32 (30-pin Type-C DevKit) | Any 30-pin variant with USB-C |
-| PN532 NFC module (V3, red board) | I²C mode (DIP switches: 1=OFF, 2=ON) |
+| PN532 NFC module (V3, red board) | SPI mode (DIP switches: 1=OFF, 2=ON) |
 | KY-006 passive buzzer module | 3-pin breakout |
-| 7× female-to-female Dupont jumpers | ESP32-Module connections |
+| 8× female-to-female Dupont jumpers | ESP32-Module connections |
 | USB-C cable + 5V wall charger | For power |
 
 ### Per cart
@@ -64,16 +64,21 @@ display — including a smart TV that can't install a cert — can show the dash
 ### Wiring
 
 ```
-PN532 VCC -> ESP32 3V3
-PN532 GND -> ESP32 GND
-PN532 SDA -> ESP32 GPIO 21
-PN532 SCL -> ESP32 GPIO 22
-KY-006 S  -> ESP32 GPIO 25
-KY-006 -  -> ESP32 GND
+PN532 VCC  -> ESP32 3V3
+PN532 GND  -> ESP32 GND
+PN532 SCK  -> ESP32 GPIO 18
+PN532 MISO -> ESP32 GPIO 19
+PN532 MOSI -> ESP32 GPIO 23
+PN532 SS   -> ESP32 GPIO 5
+KY-006 S   -> ESP32 GPIO 25
+KY-006 -   -> ESP32 GND
 KY-006 middle pin -> 3V3 (if labeled VCC) or leave NC
 ```
 
-> **PN532 DIP switches must be set to I²C mode**: switch 1 OFF, switch 2 ON. Otherwise the firmware can't communicate with the chip.
+> **PN532 DIP switches must be set to SPI mode**: switch 1 OFF, switch 2 ON (this is the SPI
+> setting on this red-board variant). Otherwise the firmware can't communicate with the chip.
+> The PN532 uses the ESP32's default hardware-SPI (VSPI) bus — SCK/MISO/MOSI are fixed at
+> 18/19/23; only the SS/CS pin (GPIO 5) is configurable.
 
 ### Server
 
@@ -100,13 +105,28 @@ Any always-on x86 machine running Windows or Linux. Tested on Windows 10/11. Rec
 - **Resilience:** daily SQLite `.backup()` to `backups/` and a Windows keep-awake thread (both skipped when `testing = True`)
 
 ### Dashboard & editing
-- **`GET /` (HTTP :5001)** — full-screen live board (`static/dashboard.html` + `app.js` + `styles.css`), grouped by location, with overdue/warning highlighting. Updates in real time over SSE. Plaintext, so any display can load it with no cert. Cards animate smoothly as carts move between columns and show an emergency badge on any cart flagged by an emergency edit; animations honor `prefers-reduced-motion`.
+- **`GET /` (HTTP :5001)** — full-screen live board (`static/dashboard.html` + `app.js` + `styles.css`), grouped by location, with per-zone overdue (🔴) / warning (🟡) highlighting. **Each flagged card shows a short reason line** explaining *why* it's flagged — e.g. `🟡 Due in 3 days`, `🔴 2 days overdue`, or `🔴 Return to Jurassic Park` for an emptied cart still parked in MAL (criteria differ by zone — see [Status highlighting](#status-highlighting)). Updates in real time over SSE. Plaintext, so any display can load it with no cert. Cards animate smoothly as carts move between columns and show an emergency badge on any cart flagged by an emergency edit; animations honor `prefers-reduced-motion`.
 - **`GET /edit` (HTTPS :5000)** — a **login-gated** page for a computer stationed in Jurassic Park to edit each JP cart's **contents** and **use-by date**. Saves via `PATCH /api/carts/<id>` over HTTPS; edits broadcast instantly to the live board. If another edit changes the JP cart list while you're working, the page detects the drift over SSE and prompts you to reload before saving stale data. See [Authentication & Access](#authentication--access) for the login and Emergency Edit Mode.
+
+#### Status highlighting
+The board colors each cart from its `current_location` + `date_usage`, and the color and the
+reason line come from a single function (`cartStatus` in `static/app.js`) so they can never
+disagree. The thresholds are **zone-specific** (Jurassic Park needs a 3-day prep lead, so it
+trips earliest):
+
+| Zone | 🟡 Warning | 🔴 Overdue |
+|---|---|---|
+| Jurassic Park | exactly 3 days before use-by | within 2 days of use-by, or past |
+| JIT | on the use-by day | after the use-by day |
+| MAL | after the use-by day | *never* on a date — **but** a `Return` cart still sitting in MAL is flagged red (`Return to Jurassic Park`) since it was emptied leaving MAL but hasn't been taken back |
+
+Carts with no date, or a `Return` date anywhere other than MAL, are shown neutrally. The
+reason text reads out the day math (`Due in N days` / `Due today` / `N days overdue`).
 
 ### Client side (`NFCSystem/`)
 - **MCU:** ESP32-WROOM-32
 - **Build system:** PlatformIO + Arduino framework
-- **NFC:** Adafruit PN532 library, I²C mode
+- **NFC:** Adafruit PN532 library, hardware-SPI mode (SS on GPIO 5; VSPI SCK/MISO/MOSI 18/19/23)
 - **Networking:** WiFi station + **HTTPS** via `WiFiClientSecure`, with the server's self-signed cert **pinned** (`setCACert`). Requires an NTP time sync at boot so cert-date validation passes.
 - **Audio feedback:** PWM tones via KY-006 passive buzzer
 
@@ -471,7 +491,7 @@ Exceeding a limit returns `429`. All values are tunable constants/decorators in
 | `SERVER_URL` | Full HTTPS URL to the scan (write) endpoint, e.g. `https://<host>:5000/scan` |
 | `SERVER_CERT` | The server's `cert.pem` (PEM), pinned via `setCACert` |
 | `API_KEY` | Must match server's `NFC_API_KEY` |
-| `SDA_PIN`, `SCL_PIN` | I²C pins for PN532 (default 21, 22) |
+| `PN532_SS` | Hardware-SPI chip-select (SS/CS) pin for the PN532 (default 5). SCK/MISO/MOSI are fixed at the ESP32's default VSPI pins 18/19/23 and are not configured here. |
 | `BUZZER_PIN` | GPIO for KY-006 signal pin (default 25) |
 | `SCAN_INTERVAL_MS` | Delay between PN532 polls (default 200ms) |
 | `DEBOUNCE_SAME_TAG_MS` | Same UID re-scans ignored within this window (default 3000ms) |
@@ -487,7 +507,7 @@ Exceeding a limit returns `429`. All values are tunable constants/decorators in
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| Boot-fail siren forever | PN532 not responding | Check wiring (SDA→21, SCL→22, VCC→3V3, GND→GND); confirm DIP switches set to I²C (1=OFF, 2=ON) |
+| Boot-fail siren forever | PN532 not responding | Check SPI wiring (SCK→18, MISO→19, MOSI→23, SS→5, VCC→3V3, GND→GND); confirm DIP switches set to SPI (1=OFF, 2=ON) |
 | `WiFi Failed` repeatedly | Bad SSID/password | Edit `config.h`, rebuild, reflash |
 | `Server: -1` | Couldn't reach server, or TLS handshake failed | See "Network issues" below; if WiFi is up, suspect TLS (see next row) |
 | `Server: -1` right after "Syncing time for TLS" fails | Clock never synced → cert-date validation fails | Ensure NTP (UDP 123) egress is allowed; the boot log should show time sync "done" before scans work |
@@ -583,8 +603,16 @@ regenerating the cert means re-pasting it into every `config.h` and reflashing.
 points; pinning is the current choice.)* If reflashing on cert rotation becomes painful,
 `setInsecure()` (encrypt-only) is the fallback.
 
-### Why I²C for PN532 instead of SPI?
-Fewer wires (4 vs 7), same throughput at this scale, simpler library setup. SPI is faster but unnecessary for one tag-read every few seconds.
+### Why SPI for PN532 instead of I²C?
+**Logic-level compatibility, not preference.** This PN532 module runs its I²C and UART
+interfaces at **5V**, but its **SPI** interface at **3.3V**. The ESP32's GPIOs are 3.3V-only
+and are not 5V-tolerant, so I²C/UART would mean level-shifting (or risking the ESP32);
+**SPI is the only interface that talks to this board directly at safe logic levels.** So the
+firmware uses the single-arg hardware-SPI constructor (`Adafruit_PN532 nfc(PN532_SS)`, SS on
+GPIO 5, default VSPI bus 18/19/23). This was confirmed on the bench with a standalone test
+sketch (sibling `ESPtest` project) that got clean UID reads over SPI. Trade-off: more wires
+than I²C (6 vs 4 for the PN532); GPIO 21/22 are freed. I²C would only become an option with a
+3.3V-capable PN532 board or a level shifter.
 
 ### Why store NFC UIDs server-side instead of writing cart IDs to tags?
 Easier to swap a damaged tag (just re-enroll the new UID) and tags don't need to be programmed before deployment. The PN532 *can* write to tags if you want to migrate later.
