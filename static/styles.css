@@ -187,8 +187,10 @@ h1 {
 
   /* internal layout */
   display: grid;
-  grid-template-columns: 1fr auto;
-  grid-template-rows: auto 1fr;
+  /* ID gets the auto track (it's short, so always fully shown); the date takes the
+     remaining 1fr and clips within its own cell instead of overflowing onto the ID. */
+  grid-template-columns: auto 1fr;
+  grid-template-rows: auto 1fr auto;   /* row 3 (reason) collapses to 0 when hidden */
   column-gap: 0.4rem;
   row-gap: 0.25rem;
   align-items: baseline;
@@ -212,12 +214,15 @@ h1 {
   grid-column: 2;
   grid-row: 1;
   justify-self: end;
+  min-width: 0;                     /* allow the cell to shrink so ellipsis works */
+  max-width: 100%;
   font-size: clamp(0.65rem, 1.4vmin, 1.2rem);
   font-weight: 500;
   color: #7a8a9a;
-  line-height: 1;
+  line-height: 1.25;                /* room for descenders (e.g. the g in "Returning") */
+  padding-bottom: 0.12em;           /* keep overflow:hidden from clipping the descender */
   white-space: nowrap;
-  overflow: visible;
+  overflow: hidden;                 /* clip within the cell, never over the ID */
   text-overflow: ellipsis;
 }
 
@@ -263,6 +268,26 @@ h1 {
 .cart-card.warning .cart-contents     { color: #fff3cd; }
 .cart-card.warning .cart-date     { color: #ffd54f; font-weight: 700; }
 
+/* ========== Flag reason line (why a card is warning/overdue) ========== */
+/* Sits in the collapsible 3rd grid row; hidden until the card is flagged, so
+   unflagged cards render exactly as before. Text (with a 🟡/🔴 prefix) comes from
+   cartStatus() in app.js, keeping wording and colour in lockstep. */
+.cart-reason {
+  grid-column: 1 / -1;
+  grid-row: 3;
+  align-self: end;
+  font-size: clamp(0.6rem, 1.3vmin, 1.05rem);
+  font-weight: 700;
+  line-height: 1.25;                /* room for descenders (e.g. the p in "Park", y in "days") */
+  padding-bottom: 0.12em;           /* keep overflow:hidden from clipping the descender */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: none;                    /* only revealed on flagged cards */
+}
+.cart-card.warning .cart-reason { display: block; color: #ffd54f; }
+.cart-card.overdue .cart-reason { display: block; color: #ffb3b3; }
+
 
 /* ========== Move animation (FLIP ghost travel) ========== */
 /* The ghost is a clone pinned to <body> so it glides ABOVE the overflow:hidden
@@ -292,7 +317,7 @@ h1 {
 }
 
 /* Smoothly tween text colour when a card crosses a warning/overdue threshold. */
-.cart-id, .cart-contents, .cart-date { transition: color 0.35s ease; }
+.cart-id, .cart-contents, .cart-date, .cart-reason { transition: color 0.35s ease; }
 
 /* Crossfade a field whose text changed (e.g. an edit to contents / use-by date). */
 .content-changed { animation: content-fade 0.5s ease-out; }

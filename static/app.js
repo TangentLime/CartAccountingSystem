@@ -35,80 +35,83 @@ function parseUseDate(s) {
   return new Date(yyyy, mm - 1, dd);
 }
 
-function isOverdue(cart) {
-  const useBy = parseUseDate(cart.date_usage);
-  if (!useBy) return false;
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const leadDate = new Date(useBy);
-  leadDate.setDate(leadDate.getDate() - 3);
-  
-  if (cart.current_location === 'MAL') {
-    return false;
-  }
-  else if (cart.current_location === 'JIT') {
-    return today > useBy;
-  }
-  else if (cart.current_location === 'Jurassic Park') {
-    return today > leadDate;
-  }
+// Whole-day difference (DST-safe) between two local-midnight dates.
+function daysBetween(from, to) {
+  return Math.round((to - from) / 86400000);
 }
 
-function isWarning(cart)
-{
-  const useBy = parseUseDate(cart.date_usage);
-  if (!useBy) return false;
-  const today = new Date();
-  useBy.setHours(0, 0, 0, 0);
-  today.setHours(0, 0, 0, 0);
-  const leadDate = new Date(useBy);
-  leadDate.setDate(leadDate.getDate() - 3);
+// Human phrase for how far off the use-by date is.
+function describeDue(daysUntil) {
+  if (daysUntil < 0) {
+    const n = -daysUntil;
+    return `${n} day${n === 1 ? '' : 's'} overdue`;
+  }
+  if (daysUntil === 0) return 'Due today';
+  return `Due in ${daysUntil} day${daysUntil === 1 ? '' : 's'}`;
+}
 
-  if (cart.current_location === 'MAL') {
-    return today > useBy;
+// Single source of truth for a cart's flag colour AND its reason line, so the two
+// can never disagree. Returns { level: 'overdue' | 'warning' | null, reason }.
+function cartStatus(cart) {
+  const loc = cart.current_location;
+
+  // A 'Return' cart was emptied on its way out of MAL. If it's still sitting in
+  // MAL it hasn't been taken back yet, so flag it red with that instruction.
+  // Return carts elsewhere (already home / en route) stay neutral.
+  if (cart.date_usage === 'Return') {
+    if (loc === 'MAL') return { level: 'overdue', reason: '🔴 Return to Jurassic Park' };
+    return { level: null, reason: '' };
   }
-  else if (cart.current_location === 'JIT') {
-    return today.getTime() === useBy.getTime();
+
+  const useBy = parseUseDate(cart.date_usage);
+  if (!useBy) return { level: null, reason: '' };
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const daysUntil = daysBetween(today, useBy);
+
+  // Thresholds reproduce the original isOverdue/isWarning truth table exactly.
+  let level = null;
+  if (loc === 'MAL') {
+    level = daysUntil < 0 ? 'warning' : null;        // MAL never goes red on a date
+  } else if (loc === 'JIT') {
+    if (daysUntil < 0)       level = 'overdue';
+    else if (daysUntil === 0) level = 'warning';
+  } else if (loc === 'Jurassic Park') {
+    if (daysUntil <= 2)       level = 'overdue';      // JP needs a 3-day prep lead
+    else if (daysUntil === 3) level = 'warning';
   }
-  else if (cart.current_location === 'Jurassic Park') {
-    return today.getTime() === leadDate.getTime();
-  }
+
+  if (!level) return { level: null, reason: '' };
+  const emoji = level === 'overdue' ? '🔴' : '🟡';
+  return { level, reason: `${emoji} ${describeDue(daysUntil)}` };
 }
 
 // ---------- rendering ----------
 
 function cartCardHtml(cart) {
-  const overdue = isOverdue(cart);
-  const warning = isWarning(cart);
+  const { level, reason } = cartStatus(cart);
   const classes = ['cart-card'];
-  if (overdue) {
-    classes.push('overdue')
-  }
-  else if (warning) {
-    classes.push('warning')
-  }
+  if (level) classes.push(level);                // 'overdue' | 'warning' (mutually exclusive)
   if (cart.emergency_flag) classes.push('emergency');
 
   // ⚠️ badge is always in the DOM; CSS reveals it only on .emergency cards, so
   // updateCard just toggles the class (no markup churn for the FLIP reconciler).
   const badge = `<span class="emergency-badge" title="Emergency edit — pending review">⚠️</span>`;
 
-  if (cart.date_usage == 'Return')
-  {
-    return `
-    <div class="${classes.join(' ')}" data-cart-id="${cart.id}">
-      ${badge}
-      <div class="cart-id">ID: ${cart.id}</div>
-      <div class="cart-contents">${escapeHtml(cart.contents)}</div>
-      <div class="cart-date">Returning...</div>
-    </div>`;
-  }
+  const dateText = cart.date_usage === 'Return'
+    ? 'Returning...'
+    : `📅 ${escapeHtml(cart.date_usage)}`;
+
+  // .cart-reason is always in the DOM (empty on unflagged cards); CSS reveals it
+  // only on .warning/.overdue cards, mirroring the emergency-badge pattern.
   return `
     <div class="${classes.join(' ')}" data-cart-id="${cart.id}">
       ${badge}
       <div class="cart-id">ID: ${cart.id}</div>
       <div class="cart-contents">${escapeHtml(cart.contents)}</div>
-      <div class="cart-date">📅 ${escapeHtml(cart.date_usage)}</div>
+      <div class="cart-date">${dateText}</div>
+      <div class="cart-reason">${escapeHtml(reason)}</div>
     </div>`;
 }
 
@@ -123,10 +126,9 @@ function buildCard(cart) {
 // "before" state to animate from). Toggles state classes and crossfades any
 // field whose visible text actually changed.
 function updateCard(node, cart) {
-  const overdue = isOverdue(cart);
-  const warning = isWarning(cart);
-  node.classList.toggle('overdue', !!overdue);
-  node.classList.toggle('warning', !!warning && !overdue);
+  const { level, reason } = cartStatus(cart);
+  node.classList.toggle('overdue', level === 'overdue');
+  node.classList.toggle('warning', level === 'warning');
   node.classList.toggle('emergency', !!cart.emergency_flag);
 
   const dateText = cart.date_usage === 'Return'
@@ -136,6 +138,7 @@ function updateCard(node, cart) {
   setFieldText(node.querySelector('.cart-id'), `ID: ${cart.id}`);
   setFieldText(node.querySelector('.cart-contents'), String(cart.contents ?? ''));
   setFieldText(node.querySelector('.cart-date'), dateText);
+  setFieldText(node.querySelector('.cart-reason'), reason);
 }
 
 // Set text only when it changed; restart the crossfade animation each time.
